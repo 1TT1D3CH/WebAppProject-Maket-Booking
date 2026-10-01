@@ -3,37 +3,94 @@
 @tailwind utilities;
 
 @layer utilities {
-  /* Grid pattern background for canvas */
-  .bg-grid-pattern {
-    background-size: 20px 20px;
-    background-image: 
-      linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  /* Modern Dot-Grid pattern background (Figma / Linear style) */
+  .bg-dot-pattern {
+    background-size: 24px 24px;
+    background-image: radial-gradient(circle, rgba(148, 163, 184, 0.3) 1.5px, transparent 1.5px);
   }
-  
-  .bg-grid-pattern-lg {
-    background-size: 100px 100px;
-    background-image: 
-      linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+
+  .bg-dot-pattern-light {
+    background-size: 24px 24px;
+    background-image: radial-gradient(circle, rgba(148, 163, 184, 0.25) 1.5px, transparent 1.5px);
+  }
+
+  /* Clean Glassmorphism panel styles */
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .glass-panel-dark {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* Micro-animation transitions */
+  .transition-micro {
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 }
 
-/* Custom Scrollbars */
+/* Base styles & typography */
+body {
+  font-family: 'Prompt', 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color-scheme: light;
+  background-color: #f8fafc;
+  color: #0f172a;
+  /* Thai language needs more line-height to prevent vowels from being clipped */
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ensure Thai vowels and tone marks are never clipped */
+* {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Thai text specific: prevent vowels from being cut off */
+:lang(th),
+.font-thai {
+  line-height: 1.8;
+  letter-spacing: 0.01em;
+}
+
+
+/* Custom Minimalist Scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Micro-animations */
+.animate-slide-up {
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

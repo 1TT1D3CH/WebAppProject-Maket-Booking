@@ -38,5 +38,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if request.auth.uid == userId || isAdmin();
     }
+
+    // Notifications Collection
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

@@ -1,3 +1,0 @@
--มี onwer market
--ปรับ device ui
--การใช้งานใน มือถือ

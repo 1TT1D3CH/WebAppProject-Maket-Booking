@@ -15,7 +15,7 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth'
  * Eliminates Vue reactivity proxies and removes undefined fields
  */
 function sanitizeData(data) {
-  return JSON.parse(JSON.stringify(data))
+  return JSON.parse(JSON.stringify(data || []))
 }
 
 /**
@@ -58,6 +58,10 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
           name: data.name,
           zones: data.zones || [],
           stalls: data.stalls || [],
+          layoutObjects: data.layoutObjects || [],
+          marketWidthMeters: data.marketWidthMeters,
+          marketHeightMeters: data.marketHeightMeters,
+          gridSnapMeters: data.gridSnapMeters,
           updatedAt: data.updatedAt
         })
       }
@@ -75,7 +79,7 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
 /**
  * Save / Update Full Market Layout to Firestore with fallback
  */
-export async function saveMarketLayoutToFirestore(marketName, zones, stalls) {
+export async function saveMarketLayoutToFirestore(marketName, zones, stalls, dimensions = {}, layoutObjects = []) {
   if (!isRealFirebaseConfigured || !db) {
     console.log('Local Mode: Saved to localStorage')
     return { success: true, mode: 'local' }
@@ -85,11 +89,16 @@ export async function saveMarketLayoutToFirestore(marketName, zones, stalls) {
     const marketDocRef = doc(db, 'markets', 'main-layout')
     const sanitizedZones = sanitizeData(zones)
     const sanitizedStalls = sanitizeData(stalls)
+    const sanitizedLayoutObjects = sanitizeData(layoutObjects)
 
     const payload = {
       name: marketName || 'ตลาดยามเย็น Walking Street KKU',
       zones: sanitizedZones,
       stalls: sanitizedStalls,
+      layoutObjects: sanitizedLayoutObjects,
+      marketWidthMeters: dimensions.marketWidthMeters || 30,
+      marketHeightMeters: dimensions.marketHeightMeters || 20,
+      gridSnapMeters: dimensions.gridSnapMeters || 0.5,
       updatedAt: new Date().toISOString()
     }
 
@@ -144,6 +153,7 @@ export async function bookStallWithTransaction(stallId, customerInfo, currentSta
         ...targetStall,
         status: 'booked',
         bookedBy: {
+          tenantId: customerInfo.tenantId || 'demo-tenant-001',
           name: customerInfo.name,
           phone: customerInfo.phone,
           goodsType: customerInfo.goodsType,
