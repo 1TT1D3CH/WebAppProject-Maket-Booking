@@ -1,0 +1,48 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.role == 'admin' || request.auth.token.email != null);
+    }
+
+    // Markets Collection (Layout Configuration)
+    match /markets/{marketId} {
+      allow read: if true; // เปิดให้ลูกค้าและคนทั่วไปอ่านผังตลาดได้
+      allow write: if true; // ในโหมด พัฒนา/Demo เปิดให้แอดมินบันทึกผังตลาดได้
+    }
+
+    // Stalls Collection (Individual Market Stalls)
+    match /stalls/{stallId} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if true;
+    }
+
+    // Bookings Collection (Customer Transaction History)
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create: if request.resource.data.customerName != null 
+                    && request.resource.data.stallId != null;
+      allow update, delete: if isAdmin();
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if request.auth.uid == userId || isAdmin();
+    }
+
+    // Notifications Collection
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
