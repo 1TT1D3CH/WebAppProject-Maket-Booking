@@ -2,47 +2,95 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper Functions
+
+    // ─── Helper Functions ────────────────────────────────────────────────────
     function isSignedIn() {
       return request.auth != null;
     }
-    
+
+    function isNotAnonymous() {
+      return isSignedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // role อ่านจาก users/{uid} เท่านั้น (ไม่เชื่อค่าจาก client)
+    function userRole() {
+      return isSignedIn() && exists(userPath()) ? get(userPath()).data.role : null;
+    }
+
     function isAdmin() {
-      return isSignedIn() && (request.auth.token.role == 'admin' || request.auth.token.email != null);
+      return userRole() in ['admin', 'owner'];
     }
 
-    // Markets Collection (Layout Configuration)
+    function isOwner() {
+      return userRole() == 'owner';
+    }
+
+    // ─── Markets (Layout Configuration) ──────────────────────────────────────
     match /markets/{marketId} {
-      allow read: if true; // เปิดให้ลูกค้าและคนทั่วไปอ่านผังตลาดได้
-      allow write: if true; // ในโหมด พัฒนา/Demo เปิดให้แอดมินบันทึกผังตลาดได้
+      allow read: if true; // ลูกค้าและคนทั่วไปอ่านผังตลาดได้
+      allow create, delete: if isAdmin();
+
+      // Admin แก้ผังได้ทั้งหมด
+      // ผู้เช่าที่ล็อกอินจริงอัปเดตได้เฉพาะฟิลด์ stalls/updatedAt (ใช้ตอน transaction การจอง)
+      // TODO(ระยะที่ 2 – C4, C6, B9): ข้อนี้เป็นการผ่อนปรนชั่วคราว เพราะแผงทั้งหมดยังอยู่ใน
+      // array เดียวใน markets doc ซึ่ง rules ตรวจระดับรายแผงไม่ได้ และข้อมูลผู้จอง
+      // (ชื่อ, เบอร์โทร) ยังฝังอยู่ใน stalls[].bookedBy ที่อ่านได้สาธารณะ
+      // ระยะที่ 2 จะแยกแผงไปเป็น stalls/{stallId} และย้ายข้อมูลส่วนตัวไปที่ bookings
+      allow update: if isAdmin()
+        || (isNotAnonymous()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stalls', 'updatedAt']));
     }
 
-    // Stalls Collection (Individual Market Stalls)
+    // ─── Stalls (เตรียมไว้สำหรับโครงสร้างใหม่ในระยะที่ 2) ─────────────────────
     match /stalls/{stallId} {
       allow read: if true;
-      allow create, update: if true;
-      allow delete: if true;
+      allow write: if isAdmin();
     }
 
-    // Bookings Collection (Customer Transaction History)
+    // ─── Bookings (Customer Transaction History) ─────────────────────────────
     match /bookings/{bookingId} {
-      allow read: if true;
-      allow create: if request.resource.data.customerName != null 
-                    && request.resource.data.stallId != null;
+      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
+      allow create: if isNotAnonymous()
+        && request.resource.data.tenantId == request.auth.uid
+        && request.resource.data.stallId is string;
       allow update, delete: if isAdmin();
     }
 
-    // Users Collection
+    // ─── Users ───────────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow write: if request.auth.uid == userId || isAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+
+      // สมัครได้เฉพาะ document ของตัวเอง และเป็น tenant เท่านั้น
+      allow create: if isNotAnonymous()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'tenant';
+
+      // เจ้าของแก้ข้อมูลตัวเองได้ แต่ห้ามเปลี่ยน role / Owner เปลี่ยนได้ทุกอย่าง
+      allow update: if isOwner()
+        || (isSignedIn()
+            && request.auth.uid == userId
+            && request.resource.data.role == resource.data.role);
+
+      allow delete: if isOwner();
     }
 
-    // Notifications Collection
+    // ─── Notifications ───────────────────────────────────────────────────────
     match /notifications/{notificationId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, delete: if isSignedIn()
+        && (resource.data.tenantId == request.auth.uid || isAdmin());
+
+      // ผู้เช่าทำได้แค่กด "อ่านแล้ว"
+      allow update: if isAdmin()
+        || (isSignedIn()
+            && resource.data.tenantId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']));
+
+      // แจ้งเตือนถูกสร้างตอน admin บันทึกผังเท่านั้น
+      allow create: if isAdmin();
     }
   }
 }
