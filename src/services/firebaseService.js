@@ -22,7 +22,7 @@ function sanitizeData(data) {
  */
 export function subscribeToMarketLayout(onDataReceived, onError) {
   if (!isRealFirebaseConfigured || !db) {
-    console.log('Firebase not configured. Real-time sync skipped (using Local Storage mode).')
+    if (import.meta.env.DEV) console.log('Firebase not configured. Real-time sync skipped (using Local Storage mode).')
     return () => {}
   }
 
@@ -32,7 +32,6 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
   const unsubscribe = onSnapshot(marketDocRef, (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.data()
-      console.log('⚡ Real-time update received from Firestore:', data)
       if (onDataReceived) {
         onDataReceived({
           name: data.name,
@@ -46,7 +45,7 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
         })
       }
     } else {
-      console.log('No Firestore document found for markets/main-layout yet.')
+      if (import.meta.env.DEV) console.log('No Firestore document found for markets/main-layout yet.')
     }
   }, (err) => {
     console.warn('Firestore snapshot listener warning/notice:', err.message)
@@ -61,7 +60,7 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
  */
 export async function saveMarketLayoutToFirestore(marketName, zones, stalls, dimensions = {}, layoutObjects = []) {
   if (!isRealFirebaseConfigured || !db) {
-    console.log('Local Mode: Saved to localStorage')
+    if (import.meta.env.DEV) console.log('Local Mode: Saved to localStorage')
     return { success: true, mode: 'local' }
   }
 

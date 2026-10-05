@@ -45,9 +45,11 @@ isSupported().then(supported => {
   if (supported && firebaseConfig.measurementId) {
     analytics = getAnalytics(app);
   }
-}).catch(err => console.log('Analytics notice:', err));
+}).catch(err => console.warn('Analytics notice:', err));
 
 // Real Firebase is active
 export const isRealFirebaseConfigured = true;
 
-console.log("🔥 Connected to Firebase project:", firebaseConfig.projectId);
+if (import.meta.env.DEV) {
+  console.log("🔥 Connected to Firebase project:", firebaseConfig.projectId);
+}
