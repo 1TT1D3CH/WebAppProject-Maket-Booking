@@ -422,7 +422,7 @@
         <button 
           @click="marketStore.removeStall(marketStore.selectedStall.id)"
           class="p-1.5 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 rounded-xl transition-all duration-150 hover:scale-105"
-          title="ลบแผงค้านี้"
+          title="ลบแผงค้านี้ (Delete)"
         >
           <Trash2 class="w-4 h-4" />
         </button>
@@ -478,7 +478,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { ARCHITECTURE_PRESETS } from '../../types/market'
 import { 
@@ -832,4 +832,65 @@ function handleMouseUp() {
   dragTarget.value = null
   touchStartDistance.value = 0
 }
+
+// ─── Keyboard: ลูกศรเลื่อนแผง/วัตถุที่เลือก, Delete ลบ ─────────────────────────
+const ARROW_DIRECTIONS = {
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0]
+}
+
+function isTypingTarget(el) {
+  if (!el) return false
+  return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
+}
+
+// ถ้ามี modal (overlay fixed inset-0 z-50) หรือแผงแก้ไขด้านข้างเปิดอยู่ ไม่ให้คีย์ลัดทำงานกับผัง
+function isModalOpen() {
+  return !!document.querySelector('.fixed.inset-0.z-50, [data-editor-panel]')
+}
+
+function handleKeyDown(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (isTypingTarget(e.target) || isModalOpen()) return
+  if (isDragging.value || isResizing.value) return
+
+  const stall = marketStore.selectedStall
+  const obj = marketStore.selectedObject
+  if (!stall && !obj) return
+
+  const dir = ARROW_DIRECTIONS[e.key]
+  if (dir) {
+    e.preventDefault()
+    // สแนปเปิด: ทีละช่องกริด, ปิด: ทีละ 0.1 ม. / กด Shift: ทีละ 1 ม.
+    const step = e.shiftKey
+      ? marketStore.mToPx(1)
+      : marketStore.snapToGrid && marketStore.gridSizePx > 0
+        ? marketStore.gridSizePx
+        : marketStore.mToPx(0.1)
+    const [dx, dy] = dir
+
+    if (stall) {
+      marketStore.snapshotStallIfNew(stall.id)
+      marketStore.updateStallPosition(stall.id, stall.x + dx * step, stall.y + dy * step)
+    } else {
+      marketStore.updateLayoutObjectPosition(obj.id, obj.x + dx * step, obj.y + dy * step)
+    }
+    return
+  }
+
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault()
+    if (stall) {
+      if (stall.status === 'booked' && !window.confirm(`แผง ${stall.stallNo} มีผู้จองอยู่ ต้องการลบแผงนี้หรือไม่?`)) return
+      marketStore.removeStall(stall.id)
+    } else {
+      marketStore.removeLayoutObject(obj.id)
+    }
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleKeyDown))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleKeyDown))
 </script>

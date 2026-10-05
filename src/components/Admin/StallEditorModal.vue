@@ -1,6 +1,7 @@
 <template>
   <div 
     v-if="isOpen && stall"
+    data-editor-panel
     class="fixed inset-y-0 right-0 z-40 w-full max-w-md bg-white border-l border-slate-200/90 shadow-2xl flex flex-col transition-transform text-slate-800"
   >
     <!-- Header -->
