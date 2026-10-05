@@ -65,6 +65,22 @@ export const useNotificationStore = defineStore('notification', {
   },
 
   actions: {
+    // ตอน logout: หยุดฟัง และล้างแจ้งเตือนของผู้ใช้เดิมออกจากเครื่อง
+    reset() {
+      if (this.unsubscribeListener) {
+        this.unsubscribeListener()
+        this.unsubscribeListener = null
+      }
+      this.notifications = []
+      this.deletedIds = []
+      try {
+        localStorage.removeItem('tenant_notifications')
+        localStorage.removeItem('tenant_notifications_deleted')
+      } catch {
+        // ไม่มี localStorage ก็ไม่มีอะไรต้องล้าง
+      }
+    },
+
     persistLocal() {
       try {
         localStorage.setItem('tenant_notifications', JSON.stringify(this.notifications.slice(0, 50)))

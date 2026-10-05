@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { authErrorMessage, REDIRECT_FALLBACK_CODES } from '../utils/authErrors'
+import { useNotificationStore } from './notificationStore'
 
 // ปุ่มสลับบทบาททดสอบใช้ได้เฉพาะตอน dev หรือเมื่อเปิด VITE_DEMO_MODE=true เท่านั้น
 export const DEMO_ENABLED = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
@@ -289,7 +290,10 @@ export const useAuthStore = defineStore('auth', {
       } catch (err) {
         console.error('ออกจากระบบไม่สำเร็จ:', err)
       } finally {
+        // ล้างข้อมูลของผู้ใช้เดิมทั้งหมด ไม่ signInAnonymously ต่อ
         this.setUser(null)
+        this.authError = null
+        useNotificationStore().reset()
       }
     }
   }

@@ -219,6 +219,10 @@ watch(() => authStore.currentUser, (user) => {
     customer.value.name = user.displayName || customer.value.name
     customer.value.phone = user.phone || customer.value.phone
     customer.value.citizenId = user.citizenId || customer.value.citizenId
+  } else {
+    // logout: ไม่ให้ข้อมูลของผู้ใช้เดิมค้างในฟอร์ม
+    customer.value = { name: '', phone: '', citizenId: '', goodsType: '' }
+    slipPreview.value = ''
   }
 }, { immediate: true })
 
