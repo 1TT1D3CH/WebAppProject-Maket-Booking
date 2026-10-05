@@ -1,5 +1,8 @@
 <template>
-  <div class="relative w-full h-[calc(100vh-112px)] overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col select-none transition-colors duration-300">
+  <div
+    class="relative w-full h-[calc(100vh-112px)] overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col select-none transition-colors duration-300"
+    :style="isMobile ? { paddingBottom: MOBILE_TOOLBAR_SPACE } : null"
+  >
     
     <CanvasToolbar
       :zoom-level="marketStore.zoomLevel"
@@ -209,6 +212,7 @@
     <!-- Quick Stall Inspector Floating Pill Footer -->
     <div 
       v-if="marketStore.selectedStall"
+      :style="inspectorStyle"
       class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-5 py-2.5 rounded-2xl shadow-xl flex items-center gap-4 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
     >
       <div class="flex items-center gap-2">
@@ -251,6 +255,7 @@
     <!-- Quick Architecture Object Inspector Floating Pill Footer -->
     <div 
       v-if="marketStore.selectedObject"
+      :style="inspectorStyle"
       class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-5 py-2.5 rounded-2xl shadow-xl flex items-center gap-4 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
     >
       <div class="flex items-center gap-2">
@@ -302,11 +307,19 @@ import { useMarketStore } from '../../stores/marketStore'
 import { Trash2, RotateCw } from 'lucide-vue-next'
 import CanvasToolbar from '../canvas/CanvasToolbar.vue'
 import { getIconComponent } from '../../utils/icons'
+import { useMediaQuery } from '../../composables/useMediaQuery'
 
 const marketStore = useMarketStore()
 const canvasContainer = ref(null)
 
 defineEmits(['open-editor', 'open-object-editor', 'open-market-settings'])
+
+// มือถือ: toolbar ติดขอบล่างจอ (สูง ~60px) ต้องเว้นที่ไม่ให้ทับผังและแถบข้อมูลแผง
+const isMobile = useMediaQuery('(max-width: 639px)')
+const MOBILE_TOOLBAR_SPACE = 'calc(60px + env(safe-area-inset-bottom))'
+const inspectorStyle = computed(() =>
+  isMobile.value ? { bottom: 'calc(72px + env(safe-area-inset-bottom))' } : null
+)
 
 // โหมดเลื่อนผัง (toggle จาก toolbar)
 const isPanMode = ref(false)
