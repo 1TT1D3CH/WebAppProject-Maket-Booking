@@ -16,7 +16,7 @@
             </div>
             <div>
               <h3 class="text-sm font-bold text-slate-900">
-                {{ authStore.isAuthenticated ? 'บัญชีผู้ใช้งาน' : isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)' }}
+                {{ authStore.isAuthenticated ? 'บัญชีผู้ใช้งาน' : isResetMode ? 'ลืมรหัสผ่าน' : isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)' }}
               </h3>
               <p class="text-[11px] text-slate-500 font-medium">ระบบจองแผงตลาด WalkStreet System</p>
             </div>
@@ -52,7 +52,7 @@
         </div>
 
         <!-- เข้าสู่ระบบด้วย Google (ทั้งแท็บเข้าสู่ระบบและสมัครสมาชิก) -->
-        <div v-if="!authStore.isAuthenticated" class="mt-4">
+        <div v-if="!authStore.isAuthenticated && !isResetMode" class="mt-4">
           <button
             type="button"
             :disabled="isBusy"
@@ -81,7 +81,7 @@
         </div>
 
         <!-- Auth Form -->
-        <form v-if="!authStore.isAuthenticated" @submit.prevent="handleSubmit" class="mt-4 space-y-3">
+        <form v-if="!authStore.isAuthenticated && !isResetMode" @submit.prevent="handleSubmit" class="mt-4 space-y-3">
           
           <div v-if="isRegister">
             <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อ-นามสกุล จริง *</label>
@@ -114,6 +114,15 @@
               placeholder="••••••••"
               class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition"
             />
+            <div v-if="!isRegister" class="mt-1 text-right">
+              <button
+                type="button"
+                class="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                @click="openResetMode"
+              >
+                ลืมรหัสผ่าน?
+              </button>
+            </div>
           </div>
 
           <div v-if="isRegister" class="grid grid-cols-2 gap-2">
@@ -157,8 +166,51 @@
           </button>
         </form>
 
+        <!-- ลืมรหัสผ่าน -->
+        <form v-if="!authStore.isAuthenticated && isResetMode" class="mt-4 space-y-3" @submit.prevent="handleSendReset">
+          <p class="text-xs text-slate-600">กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปให้</p>
+          <div>
+            <label for="reset-email" class="block text-xs font-semibold text-slate-700 mb-1">อีเมล (Email) *</label>
+            <input
+              id="reset-email"
+              v-model="resetEmail"
+              type="email"
+              required
+              autocomplete="email"
+              placeholder="example@market.com"
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition"
+            />
+          </div>
+
+          <div v-if="resetSentMessage" class="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-start gap-1.5">
+            <MailCheck class="w-4 h-4 shrink-0 text-emerald-600" />
+            <span>{{ resetSentMessage }}</span>
+          </div>
+          <div v-if="errorMessage" class="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5 font-medium">
+            <AlertCircle class="w-4 h-4 shrink-0 text-rose-600" />
+            <span>{{ errorMessage }}</span>
+          </div>
+
+          <button
+            type="submit"
+            :disabled="isSendingReset || resetCooldown > 0"
+            class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition text-xs flex items-center justify-center gap-2 shadow-md shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <span v-if="isSendingReset" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+            <span>{{ resetCooldown > 0 ? `ส่งอีกครั้งได้ใน ${resetCooldown} วินาที` : 'ส่งลิงก์ตั้งรหัสผ่านใหม่' }}</span>
+          </button>
+
+          <p class="text-[11px] text-slate-500">ถ้าสมัครด้วย Google ให้กดเข้าสู่ระบบด้วย Google แทน</p>
+
+          <div class="pt-3 border-t border-slate-200/80 text-center">
+            <button type="button" class="text-xs text-slate-600 hover:text-indigo-600 transition font-medium" @click="closeResetMode">
+              กลับไปหน้าเข้าสู่ระบบ
+            </button>
+          </div>
+        </form>
+
         <!-- Toggle Register/Login -->
-        <div v-if="!authStore.isAuthenticated" class="mt-4 pt-3 border-t border-slate-200/80 text-center">
+        <div v-if="!authStore.isAuthenticated && !isResetMode" class="mt-4 pt-3 border-t border-slate-200/80 text-center">
           <button 
             @click="isRegister = !isRegister"
             class="text-xs text-slate-600 hover:text-indigo-600 transition font-medium"
@@ -173,10 +225,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, defineAsyncComponent } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import { useAuthStore, DEMO_ENABLED } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
-import { UserCheck, X, AlertCircle, LogOut } from 'lucide-vue-next'
+import { UserCheck, X, AlertCircle, LogOut, MailCheck } from 'lucide-vue-next'
 
 const props = defineProps({
   isOpen: Boolean
@@ -212,6 +264,59 @@ async function handleLogout() {
   marketStore.showNotification('ออกจากระบบเรียบร้อยแล้ว', 'info')
   emit('close')
 }
+
+// ─── ลืมรหัสผ่าน ───────────────────────────────────────────────────────────
+const RESET_COOLDOWN_SECONDS = 60
+const isResetMode = ref(false)
+const resetEmail = ref('')
+const resetSentMessage = ref('')
+const isSendingReset = ref(false)
+const resetCooldown = ref(0)
+let cooldownTimer = null
+
+function openResetMode() {
+  isResetMode.value = true
+  resetEmail.value = form.email
+  resetSentMessage.value = ''
+  errorMessage.value = ''
+}
+
+function closeResetMode() {
+  isResetMode.value = false
+  resetSentMessage.value = ''
+  errorMessage.value = ''
+}
+
+function startResetCooldown() {
+  clearInterval(cooldownTimer)
+  resetCooldown.value = RESET_COOLDOWN_SECONDS
+  cooldownTimer = setInterval(() => {
+    resetCooldown.value--
+    if (resetCooldown.value <= 0) clearInterval(cooldownTimer)
+  }, 1000)
+}
+
+async function handleSendReset() {
+  errorMessage.value = ''
+  resetSentMessage.value = ''
+  isSendingReset.value = true
+  const res = await authStore.sendPasswordReset(resetEmail.value)
+  isSendingReset.value = false
+
+  if (res.success) {
+    resetSentMessage.value = 'ถ้ามีบัญชีที่ใช้อีเมลนี้ เราได้ส่งลิงก์ตั้งรหัสผ่านใหม่ไปแล้ว กรุณาเช็กกล่องจดหมายและจดหมายขยะ'
+    startResetCooldown()
+  } else {
+    errorMessage.value = res.error
+  }
+}
+
+// ปิด modal แล้วเปิดใหม่ให้กลับมาหน้าเข้าสู่ระบบ (นับถอยหลังส่งซ้ำยังนับต่อ)
+watch(() => props.isOpen, (open) => {
+  if (!open) closeResetMode()
+})
+
+onBeforeUnmount(() => clearInterval(cooldownTimer))
 
 async function handleGoogleLogin() {
   errorMessage.value = ''

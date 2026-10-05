@@ -8,7 +8,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
-  getRedirectResult
+  getRedirectResult,
+  sendPasswordResetEmail
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { authErrorMessage, REDIRECT_FALLBACK_CODES } from '../utils/authErrors'
@@ -40,6 +41,14 @@ export const DEMO_USERS = DEMO_ENABLED
       }
     }
   : {}
+
+// error ของการลืมรหัสผ่านที่แสดงให้ผู้ใช้เห็นได้ (ไม่บอกว่ามีบัญชีหรือไม่)
+const RESET_VISIBLE_ERRORS = [
+  'auth/invalid-email',
+  'auth/missing-email',
+  'auth/too-many-requests',
+  'auth/network-request-failed'
+]
 
 // ใช้กันผลลัพธ์ของการโหลด profile ที่ช้ากว่ามาเขียนทับของใหม่
 let profileLoadSeq = 0
@@ -261,6 +270,28 @@ export const useAuthStore = defineStore('auth', {
       } catch (err) {
         console.error('บันทึกข้อมูลติดต่อไม่สำเร็จ:', err)
         return { success: false, error: authErrorMessage(err, 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่') }
+      }
+    },
+
+    /**
+     * ส่งลิงก์ตั้งรหัสผ่านใหม่ (ใช้หน้ารีเซ็ตมาตรฐานของ Firebase)
+     * ไม่ว่าจะมีบัญชีที่ใช้อีเมลนี้หรือไม่ ให้ผลเหมือนกัน กันคนลองเดาว่าอีเมลไหนมีบัญชี
+     * แสดง error แยกเฉพาะอีเมลผิดรูปแบบ ส่งบ่อยเกินไป และปัญหาเครือข่าย
+     */
+    async sendPasswordReset(email) {
+      auth.languageCode = 'th'
+      try {
+        await sendPasswordResetEmail(auth, email.trim())
+        return { success: true }
+      } catch (err) {
+        if (['auth/user-not-found', 'auth/invalid-credential'].includes(err.code)) {
+          return { success: true }
+        }
+        if (RESET_VISIBLE_ERRORS.includes(err.code)) {
+          return { success: false, error: authErrorMessage(err) }
+        }
+        console.error('ส่งลิงก์ตั้งรหัสผ่านใหม่ไม่สำเร็จ:', err)
+        return { success: false, error: 'ส่งลิงก์ไม่สำเร็จ กรุณาลองใหม่' }
       }
     },
 

@@ -24,6 +24,7 @@ const MESSAGES = {
   'auth/wrong-password': WRONG_CREDENTIALS,
   'auth/user-not-found': WRONG_CREDENTIALS,
   'auth/invalid-email': 'รูปแบบอีเมลไม่ถูกต้อง',
+  'auth/missing-email': 'กรุณากรอกอีเมล',
   'auth/email-already-in-use': 'อีเมลนี้ถูกใช้สมัครแล้ว กรุณาเข้าสู่ระบบ',
   'auth/weak-password': 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร',
   // ของแอปเอง: สร้าง users/{uid} ไม่สำเร็จ
