@@ -4,10 +4,14 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
-import { authErrorMessage } from '../utils/authErrors'
+import { authErrorMessage, REDIRECT_FALLBACK_CODES } from '../utils/authErrors'
 
 // ปุ่มสลับบทบาททดสอบใช้ได้เฉพาะตอน dev หรือเมื่อเปิด VITE_DEMO_MODE=true เท่านั้น
 export const DEMO_ENABLED = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
@@ -46,6 +50,7 @@ export const useAuthStore = defineStore('auth', {
     isAuthenticated: false,
     isAuthReady: false,
     isLoading: false,
+    isGoogleLoading: false,
     authError: null
   }),
 
@@ -167,6 +172,64 @@ export const useAuthStore = defineStore('auth', {
         return { success: false, error: message }
       } finally {
         this.isLoading = false
+      }
+    },
+
+    /**
+     * เข้าสู่ระบบด้วย Google
+     * ใช้ popup เป็นหลัก แม้บนมือถือ เพราะ redirect ต้องอ่าน cookie ของ authDomain
+     * (xxx.firebaseapp.com) ข้ามโดเมน ซึ่งเบราว์เซอร์รุ่นใหม่ (Safari, Chrome ที่บล็อก
+     * third-party cookie) มักบล็อก ทำให้กลับมาจาก Google แล้วไม่ได้ล็อกอิน
+     * ถ้า authDomain ไม่ตรงกับโดเมนที่ host แอป redirect จะใช้ไม่ได้ จึงใช้เป็นทางสำรองเท่านั้น
+     * เมื่อ popup ถูกบล็อกหรือใช้ไม่ได้ในสภาพแวดล้อมนั้น
+     * ถ้าตอนนี้เป็น anonymous อยู่ จะล็อกอิน Google ทับไปเลย (ไม่ link กับ anonymous)
+     */
+    async loginWithGoogle() {
+      this.isGoogleLoading = true
+      this.authError = null
+
+      const provider = new GoogleAuthProvider()
+      // ให้เลือกบัญชีทุกครั้ง เผื่อเครื่องเดียวมีหลายบัญชี Google
+      provider.setCustomParameters({ prompt: 'select_account' })
+
+      try {
+        let userCredential
+        try {
+          userCredential = await signInWithPopup(auth, provider)
+        } catch (err) {
+          if (!REDIRECT_FALLBACK_CODES.includes(err.code)) throw err
+          // ผลลัพธ์จะถูกจับโดย completeRedirectSignIn() ตอนหน้าโหลดใหม่
+          await signInWithRedirect(auth, provider)
+          return { success: false, redirecting: true, error: authErrorMessage(err) }
+        }
+
+        await this.ensureUserProfile(userCredential.user, 'google')
+        await this._loadProfile(userCredential.user)
+        return { success: true, user: this.currentUser }
+      } catch (err) {
+        const message = authErrorMessage(err)
+        this.authError = message || null
+        return { success: false, error: message }
+      } finally {
+        this.isGoogleLoading = false
+      }
+    },
+
+    /**
+     * เรียกครั้งเดียวตอนเริ่มแอป เพื่อจับผล (หรือ error) ของ signInWithRedirect
+     * คืน null ถ้าไม่ได้มาจาก redirect
+     */
+    async completeRedirectSignIn() {
+      if (!auth) return null
+      try {
+        const userCredential = await getRedirectResult(auth)
+        if (!userCredential) return null
+        await this.ensureUserProfile(userCredential.user, 'google')
+        await this._loadProfile(userCredential.user)
+        return { success: true, user: this.currentUser }
+      } catch (err) {
+        const message = authErrorMessage(err)
+        return message ? { success: false, error: message } : null
       }
     },
 

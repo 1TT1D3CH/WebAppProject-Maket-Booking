@@ -133,6 +133,16 @@ const notificationStore = useNotificationStore()
 onMounted(() => {
   authStore.initAuth()
   marketStore.initFirebaseSync()
+
+  // กลับมาจาก signInWithRedirect (ใช้เมื่อ popup ถูกบล็อก)
+  authStore.completeRedirectSignIn().then((res) => {
+    if (!res) return
+    if (res.success) {
+      marketStore.showNotification(`เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ${res.user.displayName}`, 'success')
+    } else {
+      marketStore.showNotification(res.error, 'error')
+    }
+  })
 })
 
 // ฟังแจ้งเตือนใหม่ทุกครั้งที่ผู้ใช้/สิทธิ์เปลี่ยน
