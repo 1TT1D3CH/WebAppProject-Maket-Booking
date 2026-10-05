@@ -4,8 +4,7 @@ import { isRealFirebaseConfigured } from '../firebase/config.js'
 import { 
   subscribeToMarketLayout, 
   saveMarketLayoutToFirestore, 
-  bookStallWithTransaction,
-  initAuthListener
+  bookStallWithTransaction
 } from '../services/firebaseService.js'
 import { useNotificationStore } from './notificationStore.js'
 
@@ -44,7 +43,6 @@ export const useMarketStore = defineStore('market', {
     lastSavedTime: null,
     notification: null,
     unsubscribeRealtime: null,
-    currentUser: null,
 
     // การเปลี่ยนแปลงที่ยังไม่ได้บันทึก
     hasUnsavedChanges: false,
@@ -158,10 +156,6 @@ export const useMarketStore = defineStore('market', {
       this._captureInitialStallsState()
 
       if (!isRealFirebaseConfigured) return
-
-      initAuthListener((user) => {
-        this.currentUser = user
-      })
 
       if (!this.unsubscribeRealtime) {
         this.unsubscribeRealtime = subscribeToMarketLayout(

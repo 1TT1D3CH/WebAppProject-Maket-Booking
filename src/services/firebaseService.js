@@ -1,4 +1,4 @@
-import { db, auth, isRealFirebaseConfigured } from '../firebase/config'
+import { db, isRealFirebaseConfigured } from '../firebase/config'
 import { 
   doc, 
   setDoc, 
@@ -8,7 +8,6 @@ import {
   addDoc, 
   serverTimestamp 
 } from 'firebase/firestore'
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth'
 
 /**
  * Clean & sanitize objects before passing to Firestore
@@ -16,25 +15,6 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth'
  */
 function sanitizeData(data) {
   return JSON.parse(JSON.stringify(data || []))
-}
-
-/**
- * Initialize Firebase Auth listener
- */
-export function initAuthListener(onUserChanged) {
-  if (!isRealFirebaseConfigured || !auth) return () => {}
-  
-  return onAuthStateChanged(auth, (user) => {
-    if (user) {
-      console.log('Firebase Auth: Signed in as', user.uid)
-      if (onUserChanged) onUserChanged(user)
-    } else {
-      // Auto sign-in anonymously for testing real-time permissions
-      signInAnonymously(auth).catch(err => {
-        console.warn('Anonymous Auth notice:', err.message)
-      })
-    }
-  })
 }
 
 /**

@@ -100,6 +100,7 @@
 import { ref, onMounted } from 'vue'
 import { useMarketStore } from './stores/marketStore'
 import { useNotificationStore } from './stores/notificationStore'
+import { useAuthStore } from './stores/authStore'
 
 import Navbar from './components/Navbar.vue'
 import StallCanvas from './components/Admin/StallCanvas.vue'
@@ -114,6 +115,7 @@ import AuthModal from './components/Auth/AuthModal.vue'
 import NotificationCenter from './components/Auth/NotificationCenter.vue'
 
 const marketStore = useMarketStore()
+const authStore = useAuthStore()
 
 const isStallEditorOpen = ref(false)
 const isObjectEditorOpen = ref(false)
@@ -128,6 +130,7 @@ const bookingTargetStall = ref(null)
 const notificationStore = useNotificationStore()
 
 onMounted(() => {
+  authStore.initAuth()
   marketStore.initFirebaseSync()
   notificationStore.initNotificationSync()
 })

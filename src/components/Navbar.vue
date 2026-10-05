@@ -87,10 +87,11 @@
             @click="$emit('open-auth')"
             class="px-3 py-1.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-xs text-xs font-semibold transition-all duration-200 flex items-center gap-1.5 hover:border-slate-300 dark:hover:border-slate-700"
           >
-            <span class="text-xs">
+            <span v-if="!authStore.isAuthenticated" class="text-xs">🔑 เข้าสู่ระบบ</span>
+            <span v-else class="text-xs">
               {{ authStore.userRole === 'owner' ? '👑 Owner' : authStore.userRole === 'admin' ? '🛡️ Admin' : '🛍️ Tenant' }}
             </span>
-            <span class="max-w-[80px] sm:max-w-[120px] truncate hidden sm:inline text-slate-500 dark:text-slate-400 font-medium">
+            <span v-if="authStore.isAuthenticated" class="max-w-[80px] sm:max-w-[120px] truncate hidden sm:inline text-slate-500 dark:text-slate-400 font-medium">
               {{ authStore.userName }}
             </span>
           </button>

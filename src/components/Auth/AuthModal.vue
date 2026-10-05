@@ -16,7 +16,7 @@
             </div>
             <div>
               <h3 class="text-sm font-bold text-slate-900">
-                {{ isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)' }}
+                {{ authStore.isAuthenticated ? 'บัญชีผู้ใช้งาน' : isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)' }}
               </h3>
               <p class="text-[11px] text-slate-500 font-medium">ระบบจองแผงตลาด WalkStreet System</p>
             </div>
@@ -29,44 +29,30 @@
           </button>
         </div>
 
-        <!-- Quick Demo Switcher Section (FOR EASY TEST & EVALUATION) -->
-        <div class="mt-4 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
-          <span class="text-[10px] text-indigo-700 font-bold uppercase tracking-wider block mb-2">
-            ⚡ สลับบทบาททดสอบด่วน (Quick Demo Role Switch):
-          </span>
-          <div class="grid grid-cols-3 gap-1.5">
-            <button
-              @click="handleDemoSwitch('owner')"
-              class="px-2 py-1.5 rounded-xl text-[11px] font-bold border transition"
-              :class="authStore.userRole === 'owner' 
-                ? 'bg-purple-600 text-white border-purple-600 shadow-xs' 
-                : 'bg-white text-slate-700 border-slate-200 hover:border-purple-400 hover:bg-purple-50/50'"
-            >
-              👑 Owner
-            </button>
-            <button
-              @click="handleDemoSwitch('admin')"
-              class="px-2 py-1.5 rounded-xl text-[11px] font-bold border transition"
-              :class="authStore.userRole === 'admin' 
-                ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs' 
-                : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50'"
-            >
-              🛡️ Admin
-            </button>
-            <button
-              @click="handleDemoSwitch('tenant')"
-              class="px-2 py-1.5 rounded-xl text-[11px] font-bold border transition"
-              :class="authStore.userRole === 'tenant' 
-                ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' 
-                : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/50'"
-            >
-              🛍️ Tenant
-            </button>
+        <!-- Quick Demo Switcher Section (โหลดเฉพาะ dev / VITE_DEMO_MODE=true) -->
+        <DemoRoleSwitcher v-if="DemoRoleSwitcher" @switched="emit('close')" />
+
+        <!-- Signed-in Profile -->
+        <div v-if="authStore.isAuthenticated" class="mt-4 space-y-3">
+          <div class="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs space-y-1">
+            <div class="font-bold text-slate-900">{{ authStore.userName }}</div>
+            <div class="text-slate-500">{{ authStore.currentUser?.email }}</div>
+            <div class="text-slate-600 font-semibold">
+              บทบาท: {{ authStore.userRole === 'owner' ? '👑 Owner' : authStore.userRole === 'admin' ? '🛡️ Admin' : '🛍️ Tenant' }}
+              <span v-if="authStore.currentUser?.isDemo" class="text-amber-600">(บัญชีทดสอบ)</span>
+            </div>
           </div>
+          <button
+            @click="handleLogout"
+            class="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-xl transition text-xs flex items-center justify-center gap-2"
+          >
+            <LogOut class="w-4 h-4" />
+            <span>ออกจากระบบ</span>
+          </button>
         </div>
 
         <!-- Auth Form -->
-        <form @submit.prevent="handleSubmit" class="mt-4 space-y-3">
+        <form v-else @submit.prevent="handleSubmit" class="mt-4 space-y-3">
           
           <div v-if="isRegister">
             <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อ-นามสกุล จริง *</label>
@@ -125,18 +111,6 @@
             </div>
           </div>
 
-          <div v-if="isRegister">
-            <label class="block text-xs font-semibold text-slate-700 mb-1">เลือกบทบาท (Role) *</label>
-            <select
-              v-model="form.role"
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition font-medium"
-            >
-              <option value="tenant">ผู้เช่า / พ่อค้าแม่ค้า (Tenant)</option>
-              <option value="admin">ผู้ดูแลระบบผังตลาด (Admin)</option>
-              <option value="owner">เจ้าของตลาด (Market Owner)</option>
-            </select>
-          </div>
-
           <!-- Error Alert -->
           <div v-if="errorMessage" class="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5 font-medium">
             <AlertCircle class="w-4 h-4 shrink-0 text-rose-600" />
@@ -155,7 +129,7 @@
         </form>
 
         <!-- Toggle Register/Login -->
-        <div class="mt-4 pt-3 border-t border-slate-200/80 text-center">
+        <div v-if="!authStore.isAuthenticated" class="mt-4 pt-3 border-t border-slate-200/80 text-center">
           <button 
             @click="isRegister = !isRegister"
             class="text-xs text-slate-600 hover:text-indigo-600 transition font-medium"
@@ -170,10 +144,10 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useAuthStore } from '../../stores/authStore'
+import { ref, reactive, defineAsyncComponent } from 'vue'
+import { useAuthStore, DEMO_ENABLED } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
-import { UserCheck, X, AlertCircle } from 'lucide-vue-next'
+import { UserCheck, X, AlertCircle, LogOut } from 'lucide-vue-next'
 
 const props = defineProps({
   isOpen: Boolean
@@ -181,6 +155,11 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const authStore = useAuthStore()
+
+// ไม่รวมโค้ดส่วนนี้ใน production build ถ้าไม่ได้เปิด demo mode
+const DemoRoleSwitcher = DEMO_ENABLED
+  ? defineAsyncComponent(() => import('./DemoRoleSwitcher.vue'))
+  : null
 const marketStore = useMarketStore()
 
 const isRegister = ref(false)
@@ -191,13 +170,13 @@ const form = reactive({
   password: '',
   displayName: '',
   phone: '',
-  citizenId: '',
-  role: 'tenant'
+  citizenId: ''
 })
 
-function handleDemoSwitch(role) {
-  authStore.switchDemoRole(role)
-  marketStore.showNotification(`สลับเข้าสู่บทบาท: ${role.toUpperCase()} (${authStore.userName})`, 'success')
+
+async function handleLogout() {
+  await authStore.logout()
+  marketStore.showNotification('ออกจากระบบเรียบร้อยแล้ว', 'info')
   emit('close')
 }
 
