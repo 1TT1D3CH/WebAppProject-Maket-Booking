@@ -10,7 +10,7 @@
       :grid-snap-meters="marketStore.gridSnapMeters"
       :market-width-meters="marketStore.marketWidthMeters"
       :market-height-meters="marketStore.marketHeightMeters"
-      :is-pan-mode="isPanMode"
+      :is-pan-mode="isPanMode || isSpacePan"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
       @reset-zoom="resetZoom"
@@ -21,11 +21,12 @@
       @open-market-settings="$emit('open-market-settings')"
       @add-stall="marketStore.addStall()"
       @add-object="marketStore.addLayoutObject($event)"
+      @pan-hold="setSpacePan"
     />
 
     <!-- โหมดเลื่อนผัง: ชั้นโปร่งใสรับการลากทั้งผัง (ลากโดนแผงก็เลื่อนผัง ไม่ย้ายแผง) -->
     <div
-      v-if="isPanMode"
+      v-if="isPanMode || isSpacePan"
       class="absolute inset-0 z-10 cursor-grab active:cursor-grabbing"
       @mousedown="startPan($event.clientX, $event.clientY)"
       @mousemove="handleMouseMove"
@@ -308,6 +309,7 @@ import { Trash2, RotateCw } from 'lucide-vue-next'
 import CanvasToolbar from '../canvas/CanvasToolbar.vue'
 import { getIconComponent } from '../../utils/icons'
 import { useMediaQuery } from '../../composables/useMediaQuery'
+import { isShortcutBlocked } from '../../utils/keyboard'
 
 const marketStore = useMarketStore()
 const canvasContainer = ref(null)
@@ -321,8 +323,15 @@ const inspectorStyle = computed(() =>
   isMobile.value ? { bottom: 'calc(72px + env(safe-area-inset-bottom))' } : null
 )
 
-// โหมดเลื่อนผัง (toggle จาก toolbar)
+// โหมดเลื่อนผัง (toggle จาก toolbar) และเลื่อนชั่วคราวขณะกด Space ค้าง
 const isPanMode = ref(false)
+const isSpacePan = ref(false)
+
+function setSpacePan(held) {
+  if (held && (isDragging.value || isResizing.value)) return
+  isSpacePan.value = held
+  if (!held && !isPanMode.value) isPanning.value = false
+}
 
 function startPan(clientX, clientY) {
   isPanning.value = true
@@ -610,19 +619,8 @@ const ARROW_DIRECTIONS = {
   ArrowRight: [1, 0]
 }
 
-function isTypingTarget(el) {
-  if (!el) return false
-  return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
-}
-
-// ถ้ามี modal (overlay fixed inset-0 z-50) หรือแผงแก้ไขด้านข้างเปิดอยู่ ไม่ให้คีย์ลัดทำงานกับผัง
-function isModalOpen() {
-  return !!document.querySelector('.fixed.inset-0.z-50, [data-editor-panel]')
-}
-
 function handleKeyDown(e) {
-  if (e.ctrlKey || e.metaKey || e.altKey) return
-  if (isTypingTarget(e.target) || isModalOpen()) return
+  if (isShortcutBlocked(e)) return
   if (isDragging.value || isResizing.value) return
 
   const stall = marketStore.selectedStall

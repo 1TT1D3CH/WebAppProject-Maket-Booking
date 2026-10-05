@@ -6,7 +6,9 @@
     :class="[sizeClass, variantClass]"
     :aria-label="ariaLabel"
     :aria-pressed="toggle ? active : undefined"
-    :title="label"
+    :data-tooltip="label"
+    :data-shortcut="shortcut || undefined"
+    @mousedown="preventMouseFocus"
   >
     <component :is="icon" v-if="icon" class="w-4 h-4 shrink-0" />
     <span v-if="showLabel">{{ text ?? label }}</span>
@@ -33,10 +35,18 @@ const props = defineProps({
   // 'md' = 32px (เดสก์ท็อป), 'lg' = 44px (มือถือ)
   size: { type: String, default: 'md' },
   // ปุ่มแคบสำหรับลูกศรเปิดเมนูที่ติดกับปุ่มอื่น
-  compact: Boolean
+  compact: Boolean,
+  // คีย์ลัดที่แสดงใน tooltip เช่น "N", "Shift+1"
+  shortcut: { type: String, default: '' }
 })
 
 const buttonEl = ref(null)
+
+// คลิกด้วยเมาส์ไม่ต้องย้าย focus มาที่ปุ่ม (เหมือน Safari) ไม่งั้นกด Space ค้างเพื่อเลื่อนผัง
+// จะไปกดปุ่มที่เพิ่งคลิกซ้ำ ส่วนการใช้คีย์บอร์ด (Tab) ยัง focus ได้ตามปกติ
+function preventMouseFocus(e) {
+  if (e.button === 0) e.preventDefault()
+}
 
 const iconOnly = computed(() => !props.showLabel && !props.caret)
 

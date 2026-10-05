@@ -4,25 +4,28 @@
     v-if="isMobile"
     role="toolbar"
     aria-label="เครื่องมือผัง"
+    @keydown="handleToolbarArrows"
     class="fixed inset-x-0 bottom-0 z-30 flex items-center justify-between gap-2 px-3 pt-2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] select-none"
     :style="{ paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }"
   >
-    <ToolbarButton size="lg" variant="primary" :icon="Plus" label="เพิ่มแผง" text="แผง" @click="emit('add-stall')" />
+    <ToolbarButton size="lg" variant="primary" :icon="Plus" label="เพิ่มแผง" text="แผง" shortcut="N" aria-keyshortcuts="N" @click="emit('add-stall')" />
     <ToolbarButton
       ref="addBtn"
       size="lg"
       :icon="Shapes"
       label="เพิ่มวัตถุ"
       text="วัตถุ"
+      shortcut="O"
+      aria-keyshortcuts="O"
       :active="openMenu === 'add'"
       aria-haspopup="dialog"
       :aria-expanded="openMenu === 'add'"
       @click="toggleMenu('add')"
     />
     <div class="flex items-center">
-      <ToolbarButton size="lg" :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
-      <ToolbarButton size="lg" label="รีเซ็ตซูม 100%" :text="zoomText" class="!px-1 min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
-      <ToolbarButton size="lg" :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+      <ToolbarButton size="lg" :icon="Minus" label="ซูมออก" shortcut="−" :show-label="false" @click="emit('zoom-out')" />
+      <ToolbarButton size="lg" label="รีเซ็ตซูม 100%" shortcut="0" aria-keyshortcuts="0" :text="zoomText" class="!px-1 min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+      <ToolbarButton size="lg" :icon="Plus" label="ซูมเข้า" shortcut="+" :show-label="false" @click="emit('zoom-in')" />
     </div>
     <ToolbarButton
       ref="moreBtn"
@@ -42,6 +45,7 @@
     ref="rootEl"
     role="toolbar"
     aria-label="เครื่องมือผัง"
+    @keydown="handleToolbarArrows"
     class="absolute z-20 left-4 max-w-[calc(100%-2rem)] select-none"
     :class="dock === 'bottom' ? 'bottom-4' : 'top-4'"
   >
@@ -54,18 +58,20 @@
         @click="setCollapsed(false)"
       />
       <span :class="DIVIDER_CLASS" aria-hidden="true"></span>
-      <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
-      <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
-      <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+      <ToolbarButton :icon="Minus" label="ซูมออก" shortcut="−" :show-label="false" @click="emit('zoom-out')" />
+      <ToolbarButton label="รีเซ็ตซูม 100%" shortcut="0" aria-keyshortcuts="0" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+      <ToolbarButton :icon="Plus" label="ซูมเข้า" shortcut="+" :show-label="false" @click="emit('zoom-in')" />
     </div>
 
     <div v-else ref="barEl" :class="BAR_CLASS">
       <!-- กลุ่ม 1: สร้าง -->
-      <ToolbarButton variant="primary" :icon="Plus" label="เพิ่มแผง" @click="emit('add-stall')" />
+      <ToolbarButton variant="primary" :icon="Plus" label="เพิ่มแผง" shortcut="N" aria-keyshortcuts="N" @click="emit('add-stall')" />
       <ToolbarButton
         ref="addBtn"
         :icon="Shapes"
         label="เพิ่มวัตถุ"
+        shortcut="O"
+        aria-keyshortcuts="O"
         caret
         :active="openMenu === 'add'"
         aria-haspopup="dialog"
@@ -81,20 +87,23 @@
         :icon="Hand"
         label="โหมดเลื่อนผัง"
         text="เลื่อนผัง"
+        shortcut="Space ค้าง"
         toggle
         :active="isPanMode"
         :show-label="labelsVisible"
         @click="emit('toggle-pan-mode')"
       />
       <div v-if="!inMore('zoom')" class="flex items-center shrink-0">
-        <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
-        <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
-        <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+        <ToolbarButton :icon="Minus" label="ซูมออก" shortcut="−" :show-label="false" @click="emit('zoom-out')" />
+        <ToolbarButton label="รีเซ็ตซูม 100%" shortcut="0" aria-keyshortcuts="0" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+        <ToolbarButton :icon="Plus" label="ซูมเข้า" shortcut="+" :show-label="false" @click="emit('zoom-in')" />
       </div>
       <ToolbarButton
         v-if="!inMore('fit')"
         :icon="Scan"
         label="พอดีจอ"
+        shortcut="Shift+1"
+        aria-keyshortcuts="Shift+1"
         :show-label="labelsVisible"
         @click="emit('fit-to-screen')"
       />
@@ -103,6 +112,8 @@
           :icon="Grid3x3"
           :label="`สแนปกริด ${gridSnapMeters} เมตร`"
           :text="`Snap ${gridSnapMeters}ม.`"
+          shortcut="G"
+          aria-keyshortcuts="G"
           toggle
           :active="snapToGrid"
           :show-label="labelsVisible"
@@ -152,6 +163,8 @@
     </div>
   </div>
 
+  <ToolbarTooltip />
+
   <!-- เมนู (มือถือเปิดเป็น bottom sheet) -->
     <ToolbarMenu
       :open="openMenu === 'add'"
@@ -199,6 +212,7 @@
         <button v-if="inMore('fit')" type="button" :class="ROW_CLASS" @click="runAndClose('fit-to-screen')">
           <Scan class="w-4 h-4 shrink-0" />
           <span class="flex-1">พอดีจอ</span>
+          <kbd :class="KBD_CLASS">Shift+1</kbd>
         </button>
         <button
           v-if="inMore('pan')"
@@ -211,12 +225,13 @@
           <Hand class="w-4 h-4 shrink-0" />
           <span class="flex-1">โหมดเลื่อนผัง</span>
           <Check v-if="isPanMode" class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+          <kbd v-else :class="KBD_CLASS">Space</kbd>
         </button>
         <div v-if="inMore('zoom')" class="flex items-center gap-1 px-2.5 py-1">
           <span class="flex-1 font-medium text-slate-700 dark:text-slate-200">ซูม</span>
-          <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
-          <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
-          <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+          <ToolbarButton :icon="Minus" label="ซูมออก" shortcut="−" :show-label="false" @click="emit('zoom-out')" />
+          <ToolbarButton label="รีเซ็ตซูม 100%" shortcut="0" aria-keyshortcuts="0" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+          <ToolbarButton :icon="Plus" label="ซูมเข้า" shortcut="+" :show-label="false" @click="emit('zoom-in')" />
         </div>
         <SnapOptions
           v-if="inMore('snap')"
@@ -256,7 +271,9 @@ import ToolbarButton from './ToolbarButton.vue'
 import ToolbarMenu from './ToolbarMenu.vue'
 import AddObjectMenu from './AddObjectMenu.vue'
 import SnapOptions from './SnapOptions.vue'
+import ToolbarTooltip from './ToolbarTooltip.vue'
 import { useMediaQuery } from '../../composables/useMediaQuery'
+import { isShortcutBlocked } from '../../utils/keyboard'
 
 const props = defineProps({
   zoomLevel: { type: Number, required: true },
@@ -277,11 +294,14 @@ const emit = defineEmits([
   'toggle-pan-mode',
   'open-market-settings',
   'add-stall',
-  'add-object'
+  'add-object',
+  // true = เริ่มกด Space ค้าง (เลื่อนผังชั่วคราว), false = ปล่อย
+  'pan-hold'
 ])
 
 const BAR_CLASS = 'flex items-center gap-1 h-12 px-2 w-max max-w-full overflow-hidden bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-lg'
 const DIVIDER_CLASS = 'mx-1 h-5 w-px shrink-0 bg-slate-200 dark:bg-slate-700'
+const KBD_CLASS = 'px-1 rounded font-mono text-[10px] leading-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
 const ROW_CLASS_BASE = 'w-full flex items-center gap-2 px-2.5 rounded-xl text-left font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500'
 
 function readStorage(key, fallback) {
@@ -414,4 +434,105 @@ function toggleDock() {
   writeStorage('admin_toolbar_position', dock.value)
   closeMenu()
 }
+
+async function openAddMenu() {
+  if (collapsed.value && !isMobile.value) {
+    setCollapsed(false)
+    await nextTick()
+  }
+  openMenu.value = 'add'
+}
+
+// ─── คีย์บอร์ด ──────────────────────────────────────────────────────────────
+// ลูกศรซ้าย/ขวา, Home/End เลื่อน focus ระหว่างปุ่มใน toolbar
+function handleToolbarArrows(e) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+  const buttons = [...e.currentTarget.querySelectorAll('button:not([disabled])')]
+  const i = buttons.indexOf(document.activeElement)
+  if (i === -1) return
+  e.preventDefault()
+  e.stopPropagation() // ไม่ให้ไปเลื่อนแผงที่เลือกอยู่
+  const last = buttons.length - 1
+  let next
+  if (e.key === 'Home') next = 0
+  else if (e.key === 'End') next = last
+  else if (e.key === 'ArrowRight') next = i === last ? 0 : i + 1
+  else next = i === 0 ? last : i - 1
+  buttons[next].focus()
+}
+
+// คีย์ลัดใช้ e.code (ตำแหน่งปุ่มจริง) จึงใช้ได้แม้เปิดแป้นพิมพ์ภาษาไทยอยู่
+const SHORTCUTS = {
+  KeyN: { run: () => emit('add-stall') },
+  KeyO: { run: openAddMenu },
+  KeyG: { run: () => emit('toggle-snap') },
+  Digit0: { run: () => emit('reset-zoom') },
+  Numpad0: { run: () => emit('reset-zoom') },
+  Equal: { run: () => emit('zoom-in'), repeat: true, anyShift: true },
+  NumpadAdd: { run: () => emit('zoom-in'), repeat: true, anyShift: true },
+  Minus: { run: () => emit('zoom-out'), repeat: true },
+  NumpadSubtract: { run: () => emit('zoom-out'), repeat: true }
+}
+
+// Space ที่กดบนปุ่ม/ลิงก์ ให้ทำงานตามปกติของปุ่มนั้น
+function isActivatable(el) {
+  return !!el?.closest?.('button, a[href], summary, [role="button"], [role="option"], [role="checkbox"], [role="switch"]')
+}
+
+let spaceHeld = false
+
+function releaseSpace() {
+  if (!spaceHeld) return
+  spaceHeld = false
+  emit('pan-hold', false)
+}
+
+function handleShortcutKeydown(e) {
+  if (e.defaultPrevented || isShortcutBlocked(e)) return
+
+  if (e.code === 'Space') {
+    if (!spaceHeld && isActivatable(e.target)) return
+    e.preventDefault() // กันหน้าเลื่อน
+    if (!spaceHeld && !e.repeat) {
+      spaceHeld = true
+      emit('pan-hold', true)
+    }
+    return
+  }
+
+  if (e.code === 'Digit1' && e.shiftKey) {
+    if (e.repeat) return
+    e.preventDefault()
+    emit('fit-to-screen')
+    return
+  }
+
+  let shortcut = SHORTCUTS[e.code]
+  // แป้นพิมพ์ภาษาอื่นที่มีปุ่ม + / − แยก (เช่น เยอรมัน) ใช้ค่าตัวอักษรแทน
+  if (!shortcut && !/^(Key|Digit)/.test(e.code)) {
+    if (e.key === '+') shortcut = SHORTCUTS.NumpadAdd
+    else if (e.key === '-') shortcut = SHORTCUTS.NumpadSubtract
+  }
+  if (!shortcut) return
+  if (e.shiftKey && !shortcut.anyShift) return
+  if (e.repeat && !shortcut.repeat) return
+  e.preventDefault()
+  shortcut.run()
+}
+
+function handleShortcutKeyup(e) {
+  if (e.code === 'Space') releaseSpace()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleShortcutKeydown)
+  window.addEventListener('keyup', handleShortcutKeyup)
+  window.addEventListener('blur', releaseSpace)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleShortcutKeydown)
+  window.removeEventListener('keyup', handleShortcutKeyup)
+  window.removeEventListener('blur', releaseSpace)
+  releaseSpace()
+})
 </script>

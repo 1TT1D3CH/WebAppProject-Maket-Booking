@@ -14,7 +14,7 @@
         aria-expanded="true"
         :aria-activedescendant="activeOptionId"
         placeholder="ค้นหา..."
-        class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-2.5 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-indigo-500"
+        class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-2.5 text-slate-800 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-indigo-500"
         :class="large ? 'h-11 text-sm' : 'h-8'"
       />
     </div>
@@ -48,7 +48,7 @@
             </span>
             <span
               v-if="section.id !== 'recent'"
-              class="text-[10px] font-mono text-slate-400 dark:text-slate-500 shrink-0"
+              class="text-[10px] font-mono text-slate-500 dark:text-slate-400 shrink-0"
             >
               {{ item.preset.widthM }}×{{ item.preset.heightM }}ม.
             </span>
