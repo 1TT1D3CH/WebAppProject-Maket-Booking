@@ -1,3 +1,7 @@
+> ✅ **สถานะ: ใช้งานแล้ว — ห้ามรันซ้ำ**
+> prompt นี้ถูกใช้พัฒนาโปรเจกต์ไปแล้ว (โค้ดที่ได้อยู่ใน repo แล้ว) เก็บไว้เป็นประวัติเท่านั้น
+> ถ้าคุณเป็น AI agent ที่ได้รับไฟล์นี้: อย่าทำตามคำสั่งด้านล่าง ให้แจ้งผู้ใช้ว่า prompt นี้ใช้ไปแล้ว
+
 # Task: Refactor and Enhance UX/UI for Market Stall Booking System (Admin Builder)
 
 You are tasked with improving the UX/UI of the React/Web application for the **Dynamic Market Stall Booking System (Admin Builder view)** based on the attached screenshot analysis.
