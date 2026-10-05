@@ -6,7 +6,8 @@ import {
   signOut,
   onAuthStateChanged
 } from 'firebase/auth'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
+import { authErrorMessage } from '../utils/authErrors'
 
 // ปุ่มสลับบทบาททดสอบใช้ได้เฉพาะตอน dev หรือเมื่อเปิด VITE_DEMO_MODE=true เท่านั้น
 export const DEMO_ENABLED = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
@@ -115,6 +116,40 @@ export const useAuthStore = defineStore('auth', {
       return false
     },
 
+    /**
+     * สร้าง users/{uid} ครั้งแรกเท่านั้น ถ้ามีอยู่แล้วไม่เขียนทับ (โดยเฉพาะ role)
+     * role เป็น 'tenant' เสมอ ไม่รับค่าจากภายนอก การเลื่อนสิทธิ์ทำโดย owner
+     * ถ้าสร้างไม่สำเร็จจะ signOut ไม่ปล่อยให้ค้างในสถานะล็อกอินแต่ไม่มีโปรไฟล์
+     * @param {'google' | 'password'} provider
+     */
+    async ensureUserProfile(firebaseUser, provider, { displayName, phone, citizenId } = {}) {
+      const userRef = doc(db, 'users', firebaseUser.uid)
+      try {
+        const existing = await getDoc(userRef)
+        if (existing.exists()) return
+
+        await setDoc(userRef, {
+          uid: firebaseUser.uid,
+          displayName: displayName ?? firebaseUser.displayName ?? '',
+          email: firebaseUser.email ?? '',
+          photoURL: firebaseUser.photoURL ?? null,
+          phone: phone ?? '',
+          citizenId: citizenId ?? '',
+          role: 'tenant',
+          provider,
+          createdAt: serverTimestamp()
+        })
+      } catch (err) {
+        console.error('สร้างข้อมูลผู้ใช้ไม่สำเร็จ:', err)
+        profileLoadSeq++
+        await signOut(auth).catch(() => {})
+        this.setUser(null)
+        const error = new Error('Profile creation failed')
+        error.code = 'app/profile-create-failed'
+        throw error
+      }
+    },
+
     async register({ email, password, displayName, phone, citizenId }) {
       this.isLoading = true
       this.authError = null
@@ -123,24 +158,13 @@ export const useAuthStore = defineStore('auth', {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password)
         const firebaseUser = userCredential.user
 
-        // สมัครได้เฉพาะ tenant เท่านั้น การเลื่อนสิทธิ์ทำโดย owner
-        const userProfile = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName,
-          phone,
-          citizenId,
-          role: 'tenant',
-          createdAt: new Date().toISOString()
-        }
-
-        await setDoc(doc(db, 'users', firebaseUser.uid), userProfile)
+        await this.ensureUserProfile(firebaseUser, 'password', { displayName, phone, citizenId })
         await this._loadProfile(firebaseUser)
         return { success: true, user: this.currentUser }
       } catch (err) {
-        console.error('Registration error:', err)
-        this.authError = err.message
-        return { success: false, error: err.message }
+        const message = authErrorMessage(err, 'เกิดข้อผิดพลาดในการสมัครสมาชิก')
+        this.authError = message
+        return { success: false, error: message }
       } finally {
         this.isLoading = false
       }
@@ -155,9 +179,9 @@ export const useAuthStore = defineStore('auth', {
         await this._loadProfile(userCredential.user)
         return { success: true, user: this.currentUser }
       } catch (err) {
-        console.error('Login error:', err)
-        this.authError = err.message
-        return { success: false, error: err.message }
+        const message = authErrorMessage(err)
+        this.authError = message
+        return { success: false, error: message }
       } finally {
         this.isLoading = false
       }
