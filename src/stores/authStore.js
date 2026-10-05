@@ -10,7 +10,7 @@ import {
   signInWithRedirect,
   getRedirectResult
 } from 'firebase/auth'
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { authErrorMessage, REDIRECT_FALLBACK_CODES } from '../utils/authErrors'
 
 // ปุ่มสลับบทบาททดสอบใช้ได้เฉพาะตอน dev หรือเมื่อเปิด VITE_DEMO_MODE=true เท่านั้น
@@ -59,7 +59,10 @@ export const useAuthStore = defineStore('auth', {
     isOwner: (state) => state.currentUser?.role === 'owner',
     isAdmin: (state) => state.currentUser?.role === 'admin' || state.currentUser?.role === 'owner',
     isTenant: (state) => state.currentUser?.role === 'tenant',
-    userName: (state) => state.currentUser?.displayName || state.currentUser?.email || 'ผู้ใช้งานทั่วไป'
+    userName: (state) => state.currentUser?.displayName || state.currentUser?.email || 'ผู้ใช้งานทั่วไป',
+    // ล็อกอินแล้วแต่ยังไม่มีเบอร์โทร (เช่น สมัครด้วย Google ครั้งแรก) ต้องขอก่อนจอง
+    needsPhone: (state) =>
+      state.isAuthenticated && !state.currentUser?.isDemo && !state.currentUser?.phone
   },
 
   actions: {
@@ -230,6 +233,33 @@ export const useAuthStore = defineStore('auth', {
       } catch (err) {
         const message = authErrorMessage(err)
         return message ? { success: false, error: message } : null
+      }
+    },
+
+    /**
+     * บันทึกเบอร์โทรและชื่อที่แสดง (ส่งเฉพาะ 2 ฟิลด์นี้ ไม่ส่ง role)
+     */
+    async updateContactInfo({ displayName, phone }) {
+      const firebaseUser = auth?.currentUser
+      if (!firebaseUser || firebaseUser.isAnonymous || this.currentUser?.isDemo) {
+        return { success: false, error: 'กรุณาเข้าสู่ระบบก่อน' }
+      }
+
+      const fields = { displayName, phone }
+      try {
+        try {
+          await updateDoc(doc(db, 'users', firebaseUser.uid), fields)
+        } catch (err) {
+          if (err.code !== 'not-found') throw err
+          // โปรไฟล์ยังไม่ถูกสร้าง (เช่น ปิดแท็บระหว่างล็อกอิน) ให้สร้างพร้อมข้อมูลนี้เลย
+          const provider = firebaseUser.providerData.some(p => p.providerId === 'google.com') ? 'google' : 'password'
+          await this.ensureUserProfile(firebaseUser, provider, fields)
+        }
+        this.currentUser = { ...this.currentUser, ...fields }
+        return { success: true }
+      } catch (err) {
+        console.error('บันทึกข้อมูลติดต่อไม่สำเร็จ:', err)
+        return { success: false, error: authErrorMessage(err, 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่') }
       }
     },
 

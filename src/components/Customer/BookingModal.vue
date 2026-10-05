@@ -200,7 +200,7 @@ const props = defineProps({
   stall: Object
 })
 
-const emit = defineEmits(['close', 'open-auth'])
+const emit = defineEmits(['close', 'open-auth', 'need-profile'])
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 
@@ -239,6 +239,12 @@ function handleFileUpload(e) {
 
 async function submitBooking() {
   validationError.value = ''
+
+  // ยังไม่มีเบอร์ในโปรไฟล์ ต้องกรอกก่อน ยังไม่สร้าง booking
+  if (authStore.needsPhone) {
+    emit('need-profile')
+    return
+  }
 
   if (!customer.value.name || customer.value.name.trim().length < 2) {
     validationError.value = 'กรุณาระบุชื่อ-นามสกุล ผู้จองให้ถูกต้อง'

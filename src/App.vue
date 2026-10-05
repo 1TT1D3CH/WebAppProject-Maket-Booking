@@ -55,6 +55,7 @@
       :stall="bookingTargetStall"
       @close="isBookingModalOpen = false"
       @open-auth="isAuthOpen = true"
+      @need-profile="isProfileForced = true"
     />
 
     <FirebaseSettingsModal 
@@ -65,6 +66,12 @@
     <AuthModal 
       :is-open="isAuthOpen"
       @close="isAuthOpen = false"
+    />
+
+    <CompleteProfileModal
+      :is-open="showCompleteProfile"
+      @close="closeCompleteProfile"
+      @saved="handleProfileSaved"
     />
 
     <NotificationCenter 
@@ -98,7 +105,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useMarketStore } from './stores/marketStore'
 import { useNotificationStore } from './stores/notificationStore'
 import { useAuthStore } from './stores/authStore'
@@ -113,6 +120,7 @@ import CustomerStallMap from './components/Customer/CustomerStallMap.vue'
 import BookingModal from './components/Customer/BookingModal.vue'
 import FirebaseSettingsModal from './components/FirebaseSettingsModal.vue'
 import AuthModal from './components/Auth/AuthModal.vue'
+import CompleteProfileModal from './components/Auth/CompleteProfileModal.vue'
 import NotificationCenter from './components/Auth/NotificationCenter.vue'
 
 const marketStore = useMarketStore()
@@ -159,7 +167,47 @@ watch(() => authStore.isAdmin, (isAdmin) => {
   }
 })
 
+// ─── ขอเบอร์โทรหลังล็อกอินครั้งแรก ─────────────────────────────────────────
+// เปิดเองเมื่อยังไม่มีเบอร์ ปิดได้ แต่ถ้ากดจองแผงจะถูกเปิดอีกครั้ง (isProfileForced)
+const isProfilePromptDismissed = ref(false)
+const isProfileForced = ref(false)
+const pendingBookingStall = ref(null)
+
+// รอให้หน้าล็อกอินปิดก่อน ไม่ให้ซ้อนกัน
+const showCompleteProfile = computed(() =>
+  authStore.needsPhone &&
+  !isAuthOpen.value &&
+  !authStore.isGoogleLoading &&
+  (isProfileForced.value || !isProfilePromptDismissed.value)
+)
+
+watch(() => authStore.currentUser?.uid, () => {
+  isProfilePromptDismissed.value = false
+  isProfileForced.value = false
+  pendingBookingStall.value = null
+})
+
+function closeCompleteProfile() {
+  isProfilePromptDismissed.value = true
+  isProfileForced.value = false
+  pendingBookingStall.value = null
+}
+
+function handleProfileSaved() {
+  isProfileForced.value = false
+  // กดจองค้างไว้ก่อนกรอกเบอร์ ทำต่อจากจุดนั้น
+  if (pendingBookingStall.value) {
+    handleOpenBooking(pendingBookingStall.value)
+    pendingBookingStall.value = null
+  }
+}
+
 function handleOpenBooking(stall) {
+  if (authStore.needsPhone) {
+    pendingBookingStall.value = stall
+    isProfileForced.value = true
+    return
+  }
   bookingTargetStall.value = stall
   isBookingModalOpen.value = true
 }
