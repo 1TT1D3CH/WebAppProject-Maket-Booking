@@ -17,6 +17,7 @@
         v-if="marketStore.activeMode === 'admin' && authStore.isAdmin"
         @open-editor="isStallEditorOpen = true"
         @open-object-editor="isObjectEditorOpen = true"
+        @open-market-settings="isMarketSettingsOpen = true"
       />
 
       <!-- Customer Interactive Booking View -->

@@ -1,316 +1,315 @@
 <template>
-  <!-- ══════════════════════════════════════════════════════════════════════════
-       COMPACT, COLLAPSIBLE & DOCKABLE CANVAS TOOLBAR (toolbar1.md)
-       ══════════════════════════════════════════════════════════════════════════ -->
-  <div 
-    ref="toolbarEl"
-    class="absolute z-20 transition-all duration-300 select-none pointer-events-auto"
-    :class="toolbarPosition === 'bottom' ? 'bottom-4 left-4' : 'top-4 left-4'"
+  <div
+    role="toolbar"
+    aria-label="เครื่องมือผัง"
+    class="absolute z-20 left-4 max-w-[calc(100%-2rem)] select-none"
+    :class="dock === 'bottom' ? 'bottom-4' : 'top-4'"
   >
-    <!-- 👁️ Collapsed Mini-Pill State (เมื่อพับเก็บ ให้เหลือแถบเล็ก ไม่บังผัง) -->
-    <div 
-      v-if="isToolbarCollapsed" 
-      class="flex items-center gap-1.5 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 p-1.5 rounded-2xl shadow-lg transition-all duration-200 hover:scale-105"
-    >
-      <button 
-        @click="toggleToolbarCollapse"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 rounded-xl text-xs font-bold transition shadow-xs"
-        title="ขยายแถบเครื่องมือ (Expand Controls)"
-      >
-        <Layers class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-        <span>เครื่องมือผัง</span>
-        <ChevronDown v-if="toolbarPosition === 'top'" class="w-3.5 h-3.5" />
-        <ChevronUp v-else class="w-3.5 h-3.5" />
-      </button>
-
-      <span class="text-xs font-mono font-bold text-slate-600 dark:text-slate-300 px-1">
-        {{ Math.round(zoomLevel * 100) }}%
-      </span>
-
-      <button 
-        @click="emit('zoom-in')" 
-        class="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition active:scale-95"
-        title="ซูมเข้า (+)"
-      >
-        <ZoomIn class="w-3.5 h-3.5" />
-      </button>
-      <button 
-        @click="emit('zoom-out')" 
-        class="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition active:scale-95"
-        title="ซูมออก (-)"
-      >
-        <ZoomOut class="w-3.5 h-3.5" />
-      </button>
+    <!-- พับเก็บ: เหลือปุ่มขยาย + ซูม -->
+    <div v-if="collapsed" :class="BAR_CLASS">
+      <ToolbarButton
+        :icon="dock === 'top' ? ChevronDown : ChevronUp"
+        label="ขยายแถบเครื่องมือ"
+        text="เครื่องมือผัง"
+        @click="setCollapsed(false)"
+      />
+      <span :class="DIVIDER_CLASS" aria-hidden="true"></span>
+      <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
+      <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+      <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
     </div>
 
-    <!-- 📐 Expanded Integrated Controls (Compact & Clean Toolbar) -->
-    <div 
-      v-else 
-      class="flex flex-col gap-1.5 bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 p-2 rounded-2xl shadow-xl transition-all duration-200 max-w-[calc(100vw-32px)]"
-    >
-      <!-- Row 1: Viewport Controls (Zoom, Snap, Dimensions & Dock Switcher) -->
-      <div class="flex items-center gap-1.5 flex-wrap">
-        <!-- Toggle Collapse / Minimize -->
-        <button 
-          @click="toggleToolbarCollapse"
-          class="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition-all active:scale-95 flex items-center gap-1 text-xs"
-          title="พับเก็บแถบเครื่องมือเพื่อดูผังเต็มตา"
-        >
-          <ChevronUp v-if="toolbarPosition === 'top'" class="w-4 h-4" />
-          <ChevronDown v-else class="w-4 h-4" />
-          <span class="text-[11px] font-semibold hidden sm:inline">พับเก็บ</span>
-        </button>
+    <div v-else :class="BAR_CLASS">
+      <!-- กลุ่ม 1: สร้าง -->
+      <ToolbarButton variant="primary" :icon="Plus" label="เพิ่มแผง" @click="emit('add-stall')" />
+      <ToolbarButton
+        ref="addBtn"
+        :icon="Shapes"
+        label="เพิ่มวัตถุ"
+        caret
+        :active="openMenu === 'add'"
+        aria-haspopup="dialog"
+        :aria-expanded="openMenu === 'add'"
+        @click="toggleMenu('add')"
+      />
 
-        <div class="w-px h-4 bg-slate-200 dark:bg-slate-800 my-auto"></div>
+      <span :class="DIVIDER_CLASS" aria-hidden="true"></span>
 
-        <!-- Zoom Controls -->
-        <div class="flex items-center bg-slate-100/80 dark:bg-slate-800/80 rounded-xl p-0.5 border border-slate-200/60 dark:border-slate-700/60">
-          <button 
-            @click="emit('zoom-out')" 
-            class="p-1 hover:bg-white dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition active:scale-95"
-            title="Zoom Out (-)"
-          >
-            <ZoomOut class="w-3.5 h-3.5" />
-          </button>
-          <span class="text-xs font-mono text-slate-700 dark:text-slate-200 w-11 text-center font-bold">
-            {{ Math.round(zoomLevel * 100) }}%
-          </span>
-          <button 
-            @click="emit('zoom-in')" 
-            class="p-1 hover:bg-white dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition active:scale-95"
-            title="Zoom In (+)"
-          >
-            <ZoomIn class="w-3.5 h-3.5" />
-          </button>
-          <button 
-            @click="emit('reset-zoom')" 
-            class="px-1.5 py-0.5 hover:bg-white dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-[11px] rounded-lg font-medium transition"
-            title="รีเซ็ตสเกล (Reset 100%)"
-          >
-            1:1
-          </button>
-        </div>
-
-        <div class="w-px h-4 bg-slate-200 dark:bg-slate-800 my-auto"></div>
-
-        <!-- Grid Snap Toggle -->
-        <button
+      <!-- กลุ่ม 2: มุมมอง -->
+      <ToolbarButton
+        v-if="!inMore('pan')"
+        :icon="Hand"
+        label="โหมดเลื่อนผัง"
+        text="เลื่อนผัง"
+        toggle
+        :active="isPanMode"
+        :show-label="labelsVisible"
+        @click="emit('toggle-pan-mode')"
+      />
+      <div v-if="!inMore('zoom')" class="flex items-center shrink-0">
+        <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
+        <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+        <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+      </div>
+      <ToolbarButton
+        v-if="!inMore('fit')"
+        :icon="Scan"
+        label="พอดีจอ"
+        :show-label="labelsVisible"
+        @click="emit('fit-to-screen')"
+      />
+      <div v-if="!inMore('snap')" class="flex items-center shrink-0">
+        <ToolbarButton
+          :icon="Grid3x3"
+          :label="`สแนปกริด ${gridSnapMeters} เมตร`"
+          :text="`Snap ${gridSnapMeters}ม.`"
+          toggle
+          :active="snapToGrid"
+          :show-label="labelsVisible"
           @click="emit('toggle-snap')"
-          class="px-2.5 py-1 text-xs rounded-xl border transition-all duration-150 flex items-center gap-1.5 active:scale-95"
-          :class="snapToGrid 
-            ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800 font-semibold shadow-xs' 
-            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'"
-          :title="`สแนปกริด ${gridSnapMeters} เมตร (${snapToGrid ? 'เปิด' : 'ปิด'})`"
-        >
-          <Grid class="w-3.5 h-3.5" />
-          <span>Snap {{ gridSnapMeters }}ม.</span>
-        </button>
-
-        <!-- Docking Placement Toggle (Top / Bottom) -->
-        <button
-          @click="toggleToolbarPosition"
-          class="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl transition"
-          :title="toolbarPosition === 'top' ? 'ย้ายแถบไปไว้ด้านล่างหน้าจอ' : 'ย้ายแถบไปไว้ด้านบนหน้าจอ'"
-        >
-          <Move class="w-3.5 h-3.5" />
-        </button>
-
-        <!-- Market Dimensions Summary -->
-        <div class="text-[11px] text-slate-500 dark:text-slate-400 font-mono hidden md:flex items-center gap-1 ml-auto px-1.5">
-          <Maximize2 class="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
-          <span>{{ marketWidthMeters }}×{{ marketHeightMeters }}ม.</span>
-        </div>
+        />
+        <ToolbarButton
+          ref="snapBtn"
+          :icon="ChevronDown"
+          label="เลือกขนาดกริด"
+          :show-label="false"
+          compact
+          :active="openMenu === 'snap'"
+          aria-haspopup="dialog"
+          :aria-expanded="openMenu === 'snap'"
+          @click="toggleMenu('snap')"
+        />
       </div>
 
-      <!-- Row 2: Category Dropdowns & Icon-First Creation Suite -->
-      <div class="flex items-center gap-1.5 pt-1.5 border-t border-slate-200/60 dark:border-slate-800/80 overflow-x-auto scrollbar-none relative">
-        <!-- Quick Add Stall Button -->
-        <button
-          @click="emit('add-stall')"
-          class="px-3 py-1 text-xs rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition flex items-center gap-1.5 shadow-sm shadow-indigo-200 dark:shadow-none active:scale-95 shrink-0"
-          title="เพิ่มแผงค้าใหม่"
-        >
-          <Plus class="w-3.5 h-3.5" />
-          <span>เพิ่มแผง</span>
-        </button>
+      <span :class="DIVIDER_CLASS" aria-hidden="true"></span>
 
-        <div class="w-px h-4 bg-slate-200 dark:bg-slate-800 my-auto shrink-0"></div>
-
-        <!-- Category Dropdowns (ทางเข้า-ออก, สิ่งอำนวยความสะดวก, โครงสร้าง) -->
-        <div 
-          v-for="cat in PRESET_CATEGORIES" 
-          :key="cat.id"
-          class="relative shrink-0"
-        >
-          <button
-            @click.stop="toggleCategoryDropdown(cat.id)"
-            class="px-2.5 py-1 text-xs rounded-xl border transition-all flex items-center gap-1.5 active:scale-95"
-            :class="activeDropdown === cat.id
-              ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 font-semibold shadow-xs'
-              : 'bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 font-medium'"
-          >
-            <component :is="cat.icon" class="w-3.5 h-3.5" :style="{ color: activeDropdown === cat.id ? 'currentColor' : cat.color }" />
-            <span>{{ cat.label }}</span>
-            <ChevronDown class="w-3 h-3 transition-transform" :class="{ 'rotate-180': activeDropdown === cat.id }" />
-          </button>
-
-          <!-- Dropdown Menu Popover -->
-          <Transition name="fade">
-            <div
-              v-if="activeDropdown === cat.id"
-              class="absolute left-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-2xl p-2 w-56 space-y-1 animate-slide-up"
-              :class="toolbarPosition === 'bottom' ? 'bottom-full mb-2' : 'top-full mt-2'"
-              @click.stop
-            >
-              <div class="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase px-2 py-0.5 tracking-wider">
-                {{ cat.label }}
-              </div>
-              <button
-                v-for="preset in cat.presets"
-                :key="preset.type + preset.subType"
-                @click="handleAddObjectFromDropdown(preset)"
-                class="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs transition flex items-center justify-between group/item"
-              >
-                <div class="flex items-center gap-2">
-                  <component :is="getIconComponent(preset.styleProps.icon)" class="w-4 h-4 shrink-0" :style="{ color: preset.styleProps.color }" />
-                  <span class="font-medium text-[11px] group-hover/item:text-indigo-600 dark:group-hover/item:text-indigo-400 transition-colors">{{ preset.label }}</span>
-                </div>
-                <span class="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-semibold">
-                  {{ preset.widthM }}×{{ preset.heightM }}ม.
-                </span>
-              </button>
-            </div>
-          </Transition>
-        </div>
-
-        <div class="w-px h-4 bg-slate-200 dark:bg-slate-800 my-auto shrink-0 hidden sm:block"></div>
-
-        <!-- Icon-First Quick Buttons with Tooltip (1-Click for Top Items) -->
-        <div class="hidden sm:flex items-center gap-1 shrink-0">
-          <div 
-            v-for="preset in QUICK_PRESETS" 
-            :key="'quick-' + preset.type + preset.subType"
-            class="relative group/tooltip"
-          >
-            <button
-              @click="emit('add-object', preset)"
-              class="p-1.5 rounded-xl bg-slate-50 dark:bg-slate-950 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all hover:scale-105 active:scale-95"
-            >
-              <component :is="getIconComponent(preset.styleProps.icon)" class="w-3.5 h-3.5" :style="{ color: preset.styleProps.color }" />
-            </button>
-
-            <!-- Tailwind Tooltip -->
-            <div 
-              class="absolute left-1/2 -translate-x-1/2 px-2 py-1 bg-slate-900/90 dark:bg-slate-800 text-white text-[10px] font-medium rounded-lg shadow-xl opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-all duration-150 whitespace-nowrap z-50"
-              :class="toolbarPosition === 'bottom' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'"
-            >
-              {{ preset.label }} ({{ preset.widthM }}×{{ preset.heightM }}ม.)
-            </div>
-          </div>
-        </div>
-
-      </div>
+      <!-- กลุ่ม 3: ผัง -->
+      <ToolbarButton
+        v-if="!inMore('size')"
+        :icon="Ruler"
+        label="ตั้งค่าขนาดตลาด"
+        :text="marketSizeText"
+        :show-label="labelsVisible"
+        class="font-mono"
+        @click="emit('open-market-settings')"
+      />
+      <ToolbarButton
+        ref="moreBtn"
+        :icon="MoreHorizontal"
+        label="เพิ่มเติม"
+        :show-label="false"
+        :active="openMenu === 'more'"
+        aria-haspopup="dialog"
+        :aria-expanded="openMenu === 'more'"
+        @click="toggleMenu('more')"
+      />
+      <ToolbarButton
+        :icon="dock === 'top' ? ChevronUp : ChevronDown"
+        label="พับเก็บแถบเครื่องมือ"
+        :show-label="false"
+        @click="setCollapsed(true)"
+      />
     </div>
+
+    <!-- เมนู -->
+    <ToolbarMenu
+      :open="openMenu === 'add'"
+      :anchor="addBtn?.el"
+      label="เพิ่มวัตถุ"
+      :placement="menuPlacement"
+      :width="280"
+      @close="closeMenu"
+    >
+      <AddObjectMenu @select="handleAddObject" />
+    </ToolbarMenu>
+
+    <ToolbarMenu
+      :open="openMenu === 'snap'"
+      :anchor="snapBtn?.el"
+      label="ตั้งค่าสแนปกริด"
+      :placement="menuPlacement"
+      :width="220"
+      @close="closeMenu"
+    >
+      <SnapOptions
+        :snap-to-grid="snapToGrid"
+        :grid-snap-meters="gridSnapMeters"
+        @toggle-snap="emit('toggle-snap')"
+        @set-snap-size="emit('set-snap-size', $event)"
+      />
+    </ToolbarMenu>
+
+    <ToolbarMenu
+      :open="openMenu === 'more'"
+      :anchor="moreBtn?.el"
+      label="เครื่องมือเพิ่มเติม"
+      :placement="menuPlacement"
+      :width="240"
+      @close="closeMenu"
+    >
+      <div class="text-xs space-y-0.5">
+        <button v-if="inMore('size')" type="button" :class="ROW_CLASS" @click="runAndClose('open-market-settings')">
+          <Ruler class="w-4 h-4 shrink-0" />
+          <span class="flex-1">ขนาดตลาด</span>
+          <span class="font-mono text-slate-500 dark:text-slate-400">{{ marketSizeText }}</span>
+        </button>
+        <button v-if="inMore('fit')" type="button" :class="ROW_CLASS" @click="runAndClose('fit-to-screen')">
+          <Scan class="w-4 h-4 shrink-0" />
+          <span class="flex-1">พอดีจอ</span>
+        </button>
+        <button
+          v-if="inMore('pan')"
+          type="button"
+          role="menuitemcheckbox"
+          :aria-checked="isPanMode"
+          :class="ROW_CLASS"
+          @click="runAndClose('toggle-pan-mode')"
+        >
+          <Hand class="w-4 h-4 shrink-0" />
+          <span class="flex-1">โหมดเลื่อนผัง</span>
+          <Check v-if="isPanMode" class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+        </button>
+        <div v-if="inMore('zoom')" class="flex items-center gap-1 px-2.5 py-1">
+          <span class="flex-1 font-medium text-slate-700 dark:text-slate-200">ซูม</span>
+          <ToolbarButton :icon="Minus" label="ซูมออก" :show-label="false" @click="emit('zoom-out')" />
+          <ToolbarButton label="รีเซ็ตซูม 100%" :text="zoomText" class="min-w-[3.25rem] font-mono" @click="emit('reset-zoom')" />
+          <ToolbarButton :icon="Plus" label="ซูมเข้า" :show-label="false" @click="emit('zoom-in')" />
+        </div>
+        <SnapOptions
+          v-if="inMore('snap')"
+          :snap-to-grid="snapToGrid"
+          :grid-snap-meters="gridSnapMeters"
+          @toggle-snap="emit('toggle-snap')"
+          @set-snap-size="emit('set-snap-size', $event)"
+        />
+        <div v-if="moreKeys.length" class="my-1 h-px bg-slate-200 dark:bg-slate-800"></div>
+        <button type="button" :class="ROW_CLASS" @click="toggleDock">
+          <component :is="dock === 'top' ? PanelBottom : PanelTop" class="w-4 h-4 shrink-0" />
+          <span class="flex-1">{{ dock === 'top' ? 'ย้ายแถบไปด้านล่าง' : 'ย้ายแถบไปด้านบน' }}</span>
+        </button>
+      </div>
+    </ToolbarMenu>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ARCHITECTURE_PRESETS } from '../../types/market'
-import { getIconComponent } from '../../utils/icons'
+import { ref, computed } from 'vue'
 import {
-  ZoomIn,
-  ZoomOut,
-  Grid,
-  Maximize2,
-  DoorOpen,
-  Square,
-  HelpCircle,
+  Plus,
+  Minus,
+  Shapes,
+  Hand,
+  Scan,
+  Grid3x3,
+  Ruler,
+  MoreHorizontal,
   ChevronDown,
   ChevronUp,
-  Layers,
-  Plus,
-  Move
+  Check,
+  PanelBottom,
+  PanelTop
 } from 'lucide-vue-next'
+import ToolbarButton from './ToolbarButton.vue'
+import ToolbarMenu from './ToolbarMenu.vue'
+import AddObjectMenu from './AddObjectMenu.vue'
+import SnapOptions from './SnapOptions.vue'
 
-defineProps({
+const props = defineProps({
   zoomLevel: { type: Number, required: true },
   snapToGrid: Boolean,
   gridSnapMeters: { type: Number, required: true },
   marketWidthMeters: { type: Number, required: true },
-  marketHeightMeters: { type: Number, required: true }
+  marketHeightMeters: { type: Number, required: true },
+  isPanMode: Boolean
 })
 
-const emit = defineEmits(['zoom-in', 'zoom-out', 'reset-zoom', 'toggle-snap', 'add-stall', 'add-object'])
-
-const toolbarEl = ref(null)
-
-// ─── Toolbar State (Collapsible, Dockable & Categories) ────────────────────────
-const isToolbarCollapsed = ref(localStorage.getItem('admin_toolbar_collapsed') === 'true')
-const toolbarPosition = ref(localStorage.getItem('admin_toolbar_position') || 'top')
-const activeDropdown = ref(null)
-
-function toggleToolbarCollapse() {
-  isToolbarCollapsed.value = !isToolbarCollapsed.value
-  localStorage.setItem('admin_toolbar_collapsed', String(isToolbarCollapsed.value))
-  activeDropdown.value = null
-}
-
-function toggleToolbarPosition() {
-  toolbarPosition.value = toolbarPosition.value === 'top' ? 'bottom' : 'top'
-  localStorage.setItem('admin_toolbar_position', toolbarPosition.value)
-  activeDropdown.value = null
-}
-
-function toggleCategoryDropdown(catId) {
-  activeDropdown.value = activeDropdown.value === catId ? null : catId
-}
-
-function handleAddObjectFromDropdown(preset) {
-  emit('add-object', preset)
-  activeDropdown.value = null
-}
-
-// Grouped Categories according to toolbar1.md
-const PRESET_CATEGORIES = computed(() => [
-  {
-    id: 'access',
-    label: 'ทางเข้า/ออก',
-    icon: DoorOpen,
-    color: '#10b981',
-    presets: ARCHITECTURE_PRESETS.filter(p => ['entrance', 'exit', 'walkway'].includes(p.type))
-  },
-  {
-    id: 'facility',
-    label: 'สิ่งอำนวยความสะดวก',
-    icon: HelpCircle,
-    color: '#0ea5e9',
-    presets: ARCHITECTURE_PRESETS.filter(p => p.type === 'facility' || p.subType === 'restroom')
-  },
-  {
-    id: 'structure',
-    label: 'โครงสร้างหลัก',
-    icon: Square,
-    color: '#8b5cf6',
-    presets: ARCHITECTURE_PRESETS.filter(p => p.type === 'restricted' && p.subType !== 'restroom')
-  }
+const emit = defineEmits([
+  'zoom-in',
+  'zoom-out',
+  'reset-zoom',
+  'fit-to-screen',
+  'toggle-snap',
+  'set-snap-size',
+  'toggle-pan-mode',
+  'open-market-settings',
+  'add-stall',
+  'add-object'
 ])
 
-// Quick Top-used Presets for 1-click icon mode
-const QUICK_PRESETS = computed(() => {
-  return [
-    ARCHITECTURE_PRESETS.find(p => p.type === 'walkway') || ARCHITECTURE_PRESETS[2],
-    ARCHITECTURE_PRESETS.find(p => p.type === 'entrance') || ARCHITECTURE_PRESETS[0],
-    ARCHITECTURE_PRESETS.find(p => p.subType === 'restroom') || ARCHITECTURE_PRESETS[4],
-    ARCHITECTURE_PRESETS.find(p => p.subType === 'stage') || ARCHITECTURE_PRESETS[5],
-    ARCHITECTURE_PRESETS.find(p => p.subType === 'atm') || ARCHITECTURE_PRESETS[7]
-  ].filter(Boolean)
-})
+const BAR_CLASS = 'flex items-center gap-1 h-12 px-2 w-max max-w-full overflow-hidden bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-lg'
+const DIVIDER_CLASS = 'mx-1 h-5 w-px shrink-0 bg-slate-200 dark:bg-slate-700'
+const ROW_CLASS = 'w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-left font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500'
 
-// คลิกนอก toolbar ให้ปิด dropdown
-function handleOutsidePointer(e) {
-  if (toolbarEl.value && !toolbarEl.value.contains(e.target)) activeDropdown.value = null
+function readStorage(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback
+  } catch {
+    return fallback
+  }
 }
-onMounted(() => document.addEventListener('pointerdown', handleOutsidePointer))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', handleOutsidePointer))
+
+function writeStorage(key, value) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // ไม่มี localStorage ก็ยังใช้งานได้ แค่จำค่าไม่ได้
+  }
+}
+
+// ─── สถานะของ toolbar (จำไว้ในเครื่อง) ─────────────────────────────────────
+const collapsed = ref(readStorage('admin_toolbar_collapsed', 'false') === 'true')
+const dock = ref(readStorage('admin_toolbar_position', 'top') === 'bottom' ? 'bottom' : 'top')
+const openMenu = ref(null) // null | 'add' | 'snap' | 'more'
+
+const addBtn = ref(null)
+const snapBtn = ref(null)
+const moreBtn = ref(null)
+
+const menuPlacement = computed(() => (dock.value === 'bottom' ? 'top' : 'bottom'))
+const zoomText = computed(() => `${Math.round(props.zoomLevel * 100)}%`)
+const marketSizeText = computed(() => `${props.marketWidthMeters}×${props.marketHeightMeters}ม.`)
+
+// ─── ซ่อนป้าย / ย้ายปุ่มเข้าเมนู "⋯" เมื่อที่ไม่พอ ──────────────────────────
+// ลำดับที่ย้ายเข้า "⋯" ก่อน -> หลัง
+const OVERFLOW_ORDER = ['size', 'fit', 'snap', 'pan', 'zoom']
+// 0 = แสดงครบ, 1 = ซ่อนป้ายข้อความ, 2+ = ย้ายปุ่มเข้า "⋯" ทีละอัน
+const overflowLevel = ref(0)
+
+const labelsVisible = computed(() => overflowLevel.value === 0)
+const moreKeys = computed(() => OVERFLOW_ORDER.slice(0, Math.max(0, overflowLevel.value - 1)))
+
+function inMore(key) {
+  return moreKeys.value.includes(key)
+}
+
+// ─── Actions ────────────────────────────────────────────────────────────────
+function toggleMenu(name) {
+  openMenu.value = openMenu.value === name ? null : name
+}
+
+function closeMenu() {
+  openMenu.value = null
+}
+
+function runAndClose(eventName) {
+  emit(eventName)
+  closeMenu()
+}
+
+function handleAddObject(preset) {
+  emit('add-object', preset)
+  closeMenu()
+}
+
+function setCollapsed(value) {
+  collapsed.value = value
+  writeStorage('admin_toolbar_collapsed', String(value))
+  closeMenu()
+}
+
+function toggleDock() {
+  dock.value = dock.value === 'top' ? 'bottom' : 'top'
+  writeStorage('admin_toolbar_position', dock.value)
+  closeMenu()
+}
 </script>

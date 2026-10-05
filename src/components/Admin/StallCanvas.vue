@@ -7,13 +7,31 @@
       :grid-snap-meters="marketStore.gridSnapMeters"
       :market-width-meters="marketStore.marketWidthMeters"
       :market-height-meters="marketStore.marketHeightMeters"
+      :is-pan-mode="isPanMode"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
       @reset-zoom="resetZoom"
+      @fit-to-screen="fitToScreen"
       @toggle-snap="marketStore.snapToGrid = !marketStore.snapToGrid"
+      @set-snap-size="setSnapSize"
+      @toggle-pan-mode="isPanMode = !isPanMode"
+      @open-market-settings="$emit('open-market-settings')"
       @add-stall="marketStore.addStall()"
       @add-object="marketStore.addLayoutObject($event)"
     />
+
+    <!-- โหมดเลื่อนผัง: ชั้นโปร่งใสรับการลากทั้งผัง (ลากโดนแผงก็เลื่อนผัง ไม่ย้ายแผง) -->
+    <div
+      v-if="isPanMode"
+      class="absolute inset-0 z-10 cursor-grab active:cursor-grabbing"
+      @mousedown="startPan($event.clientX, $event.clientY)"
+      @mousemove="handleMouseMove"
+      @mouseup="handleMouseUp"
+      @mouseleave="handleMouseUp"
+      @touchstart.prevent="$event.touches.length === 1 && startPan($event.touches[0].clientX, $event.touches[0].clientY)"
+      @touchmove.prevent="handleTouchMove"
+      @touchend="handleMouseUp"
+    ></div>
 
     <!-- Canvas Area with Dynamic Grid (Light / Dark Grid) -->
     <div 
@@ -288,7 +306,18 @@ import { getIconComponent } from '../../utils/icons'
 const marketStore = useMarketStore()
 const canvasContainer = ref(null)
 
-defineEmits(['open-editor', 'open-object-editor'])
+defineEmits(['open-editor', 'open-object-editor', 'open-market-settings'])
+
+// โหมดเลื่อนผัง (toggle จาก toolbar)
+const isPanMode = ref(false)
+
+function startPan(clientX, clientY) {
+  isPanning.value = true
+  panStart.value = {
+    x: clientX - marketStore.panOffset.x,
+    y: clientY - marketStore.panOffset.y
+  }
+}
 
 // Drag & Resize State
 const isDragging = ref(false)
@@ -339,6 +368,32 @@ function zoomOut() {
 function resetZoom() {
   marketStore.zoomLevel = 1.0
   marketStore.panOffset = { x: 0, y: 0 }
+}
+
+// ซูมให้ทั้งผังพอดีกับพื้นที่ที่มองเห็น แล้วจัดให้อยู่กลาง
+function fitToScreen() {
+  const el = canvasContainer.value
+  if (!el) return
+  const mapW = marketStore.canvasWidthPx
+  const mapH = marketStore.canvasHeightPx
+  const padding = 40
+  const fit = Math.min(
+    (el.clientWidth - padding * 2) / mapW,
+    (el.clientHeight - padding * 2) / mapH
+  )
+  const zoom = Math.round(Math.min(2.0, Math.max(0.4, fit)) * 100) / 100
+  marketStore.zoomLevel = zoom
+  // แผนที่เริ่มที่ 20px และ translate ถูกคูณด้วย scale
+  marketStore.panOffset = {
+    x: Math.round((el.clientWidth - mapW * zoom) / (2 * zoom) - 20),
+    y: Math.round((el.clientHeight - mapH * zoom) / (2 * zoom) - 20)
+  }
+}
+
+function setSnapSize(size) {
+  marketStore.gridSnapMeters = size
+  marketStore.snapToGrid = true
+  marketStore.markUnsaved()
 }
 
 // Touch Event Handlers
