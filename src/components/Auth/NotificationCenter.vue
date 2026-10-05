@@ -44,7 +44,7 @@
 
             <!-- ลบทั้งหมด (Clear All) Button -->
             <button 
-              v-if="list.length > 0"
+              v-if="ownCount > 0"
               @click="handleClearAll"
               class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold transition flex items-center gap-1"
               title="ลบรายการแจ้งเตือนทั้งหมด"
@@ -124,6 +124,7 @@
 import { computed } from 'vue'
 import { useAuthStore } from '../../stores/authStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useMarketStore } from '../../stores/marketStore'
 import { Bell, X, Trash2, CheckCircle2, CheckCheck } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -133,6 +134,7 @@ defineEmits(['close'])
 
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
+const marketStore = useMarketStore()
 
 const isAdminOrOwner = computed(() => {
   return authStore.isAdmin || authStore.isOwner
@@ -150,8 +152,17 @@ function handleMarkAllAsRead() {
   notificationStore.markAllAsRead(authStore.currentUser?.uid, isAdminOrOwner.value)
 }
 
+// ลบได้เฉพาะแจ้งเตือนของตัวเอง (admin ที่เห็นของทุกคนก็ลบได้แค่ของตัวเอง)
+const ownCount = computed(() => {
+  const uid = authStore.currentUser?.uid
+  return uid ? list.value.filter(n => n.tenantId === uid).length : 0
+})
+
 async function handleClearAll() {
-  await notificationStore.clearAllNotifications()
+  const ok = await notificationStore.clearAllNotifications(authStore.currentUser?.uid)
+  if (!ok) {
+    marketStore.showNotification('ลบการแจ้งเตือนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง', 'error')
+  }
 }
 
 function formatDate(isoStr) {

@@ -10,8 +10,7 @@ import {
   getDocs, 
   writeBatch,
   query,
-  orderBy,
-  limit 
+  where
 } from 'firebase/firestore'
 
 // กรองขยะใน localStorage ถ้ามีสะสมเกิน 50 รายการ
@@ -39,8 +38,7 @@ export const useNotificationStore = defineStore('notification', {
   state: () => ({
     notifications: getInitialLocalNotifications(),
     deletedIds: JSON.parse(localStorage.getItem('tenant_notifications_deleted')) || [],
-    unsubscribeListener: null,
-    isPurging: false
+    unsubscribeListener: null
   }),
 
   getters: {
@@ -78,55 +76,52 @@ export const useNotificationStore = defineStore('notification', {
 
     /**
      * Start Real-Time Listener for Firestore Notifications
-     * จำกัดเฉพาะ 30 รายการล่าสุด ป้องกันการดึงขยะ 490 รายการ
+     * ผู้เช่าฟังเฉพาะแจ้งเตือนของตัวเอง (where tenantId == uid) ให้ตรงกับ firestore.rules
+     * จำกัดเฉพาะ 30 รายการล่าสุด
+     *
+     * TODO: การล้างแจ้งเตือนเก่าควรใช้ Firestore TTL policy (เช่นฟิลด์ expireAt)
+     * หรือ Cloud Function ฝั่ง server ไม่ใช่ให้ client ลบของทุกคน
      */
-    initNotificationSync() {
+    initNotificationSync(uid, isAdminOrOwner = false) {
+      if (this.unsubscribeListener) {
+        this.unsubscribeListener()
+        this.unsubscribeListener = null
+      }
+
+      if (!uid) {
+        this.notifications = []
+        return
+      }
+
       if (!isRealFirebaseConfigured || !db) return
 
-      // ถ้าใน Firestore มีขยะสะสมมากกว่า 50 รายการ ให้ล้างขยะเก่าทิ้งทันที
-      this.autoCleanupIfSpammed()
-
-      if (!this.unsubscribeListener) {
-        try {
-          const notifCollection = collection(db, 'notifications')
-          this.unsubscribeListener = onSnapshot(notifCollection, (snapshot) => {
-            const remoteItems = []
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data()
-              const id = docSnap.id
-              if (!this.deletedIds.includes(id)) {
-                remoteItems.push({ id, ...data })
-              }
-            })
-
-            // เรียงลำดับจากใหม่สุดไปเก่าสุด และจำกัดไม่เกิน 30 รายการ
-            remoteItems.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-            const trimmed = remoteItems.slice(0, 30)
-
-            this.notifications = trimmed
-            this.persistLocal()
-          }, (err) => {
-            console.warn('Notification snapshot notice:', err.message)
-          })
-        } catch (e) {
-          console.warn('Init notification sync error:', e)
-        }
-      }
-    },
-
-    /**
-     * ตรวจสอบและล้าง notifications ขยะอัตโนมัติหากพบว่ามีเอกสารตกค้างจำนวนมาก
-     */
-    async autoCleanupIfSpammed() {
-      if (!isRealFirebaseConfigured || !db || this.isPurging) return
       try {
-        const snapshot = await getDocs(collection(db, 'notifications'))
-        if (snapshot.size > 40) {
-          console.log(`🧹 พบ notifications ตกค้าง ${snapshot.size} รายการ กำลังล้างทำความสะอาด...`)
-          await this.clearAllNotifications()
-        }
-      } catch (err) {
-        console.warn('Auto cleanup notice:', err)
+        const notifCollection = collection(db, 'notifications')
+        const notifQuery = isAdminOrOwner
+          ? notifCollection
+          : query(notifCollection, where('tenantId', '==', uid))
+
+        this.unsubscribeListener = onSnapshot(notifQuery, (snapshot) => {
+          const remoteItems = []
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data()
+            const id = docSnap.id
+            if (!this.deletedIds.includes(id)) {
+              remoteItems.push({ id, ...data })
+            }
+          })
+
+          // เรียงลำดับจากใหม่สุดไปเก่าสุด และจำกัดไม่เกิน 30 รายการ
+          remoteItems.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+          const trimmed = remoteItems.slice(0, 30)
+
+          this.notifications = trimmed
+          this.persistLocal()
+        }, (err) => {
+          console.warn('Notification snapshot notice:', err.message)
+        })
+      } catch (e) {
+        console.warn('Init notification sync error:', e)
       }
     },
 
@@ -232,28 +227,29 @@ export const useNotificationStore = defineStore('notification', {
       }
     },
 
-    // ลบการแจ้งเตือนทั้งหมดทันที (ทั้ง state + localStorage + Firestore)
-    async clearAllNotifications() {
-      this.isPurging = true
-      this.notifications = []
-      this.deletedIds = []
-      localStorage.removeItem('tenant_notifications')
-      localStorage.removeItem('tenant_notifications_deleted')
+    // ลบการแจ้งเตือนทั้งหมด "ของผู้ใช้คนนี้เท่านั้น" (state + Firestore)
+    async clearAllNotifications(uid) {
+      if (!uid) return false
+
+      this.notifications = this.notifications.filter(n => n.tenantId !== uid)
+      this.persistLocal()
 
       if (isRealFirebaseConfigured && db) {
         try {
-          const snapshot = await getDocs(collection(db, 'notifications'))
+          const snapshot = await getDocs(
+            query(collection(db, 'notifications'), where('tenantId', '==', uid))
+          )
           const batch = writeBatch(db)
           snapshot.forEach(docSnap => {
             batch.delete(docSnap.ref)
           })
           await batch.commit()
-          console.log(`✅ Cleared all ${snapshot.size} notifications from Firestore`)
         } catch (err) {
-          console.warn('Error clearing Firestore notifications:', err)
+          console.error('ลบแจ้งเตือนใน Firestore ไม่สำเร็จ:', err)
+          return false
         }
       }
-      this.isPurging = false
+      return true
     }
   }
 })

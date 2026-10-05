@@ -132,8 +132,14 @@ const notificationStore = useNotificationStore()
 onMounted(() => {
   authStore.initAuth()
   marketStore.initFirebaseSync()
-  notificationStore.initNotificationSync()
 })
+
+// ฟังแจ้งเตือนใหม่ทุกครั้งที่ผู้ใช้/สิทธิ์เปลี่ยน
+watch(
+  () => [authStore.currentUser?.uid, authStore.isAdmin],
+  ([uid, isAdmin]) => notificationStore.initNotificationSync(uid, isAdmin),
+  { immediate: true }
+)
 
 // logout / ถูกลดสิทธิ์ขณะอยู่โหมด admin ให้กลับไปหน้าลูกค้า
 watch(() => authStore.isAdmin, (isAdmin) => {
