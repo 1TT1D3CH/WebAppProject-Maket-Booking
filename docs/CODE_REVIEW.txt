@@ -1,0 +1,412 @@
+===============================================================================
+ รายงานตรวจสอบโปรเจกต์: Dynamic Market Stall Booking System (Vue 3 + Pinia + Firebase)
+ วันที่ตรวจ: 2026-10-06
+ ขอบเขต: ทุกไฟล์ใน src/, config ทั้งหมด, firestore.rules, โครงสร้าง repo และ git
+ สถานะ: รายงานอย่างเดียว ยังไม่ได้แก้ไขโค้ดใด ๆ
+===============================================================================
+
+ระดับความรุนแรง
+  [วิกฤต]  = ช่องโหว่ความปลอดภัย / ข้อมูลส่วนบุคคลรั่ว / ข้อมูลหายได้ ควรแก้ก่อนใช้งานจริง
+  [สูง]    = บั๊กที่ผู้ใช้เจอได้จริง หรือ logic ผิด
+  [กลาง]   = ปัญหาด้านการออกแบบ ประสิทธิภาพ ความถูกต้องบางกรณี
+  [ต่ำ]    = ความสะอาดของโค้ด / UX / ข้อเสนอแนะ
+
+-------------------------------------------------------------------------------
+ สรุปภาพรวม (TL;DR)
+-------------------------------------------------------------------------------
+UI ทำมาค่อนข้างดี (canvas ลากวาง, หน่วยเมตร, dark mode, ระบบแจ้งเตือนแบบรวมข้อความ)
+แต่ "ความปลอดภัยแทบไม่มีเลย": Firestore rules เปิดให้ทุกคนเขียน/ลบได้, ใครก็สลับเป็น
+Owner/Admin ได้ด้วยปุ่มเดียว, เลขบัตรประชาชนและเบอร์โทรอ่านได้สาธารณะ และ repo มี
+.env + node_modules + dist ถูก commit ขึ้น git
+
+สิ่งที่ควรทำก่อน 5 อันดับแรก:
+  1. เพิ่ม .gitignore แล้วเอา node_modules/, dist/, .env ออกจาก git    (ข้อ A1, A2)
+  2. เขียน firestore.rules ใหม่ให้เช็คสิทธิ์ตาม role จริง                 (ข้อ B1-B4)
+  3. ปิด Demo role switch / isAuthenticated=true ในเวอร์ชันใช้งานจริง และห้ามผู้ใช้เลือก role เอง (B5-B7)
+  4. แก้บั๊กการแจ้งเตือน id ไม่ตรงกัน และปุ่ม "ลบทั้งหมด" ที่ลบแจ้งเตือนของทุกคน (C1, C2)
+  5. แก้การ save ผังที่เขียนทับการจองของลูกค้า (C4, C5)
+
+
+===============================================================================
+ A. Repository / Git / การตั้งค่าโปรเจกต์
+===============================================================================
+
+A1 [วิกฤต] ไม่มีไฟล์ .gitignore -> node_modules/, dist/ ถูก commit ทั้งหมด
+   - git ls-files มี 13,256 ไฟล์ ส่วนใหญ่เป็น node_modules
+   - commit "second commit" มีการเพิ่ม/ลบ dist/assets/*.js หลายพันบรรทัด
+   แนะนำ: สร้าง .gitignore (node_modules, dist, .env, .env.local, .firebase/,
+   *.log) แล้วใช้ `git rm -r --cached node_modules dist .env`
+
+A2 [วิกฤต] ไฟล์ .env ถูก commit เข้า git
+   - Firebase Web API key ไม่ได้เป็นความลับระดับ server key แต่การ commit .env ถือเป็น
+     นิสัยที่อันตราย (ถ้าวันหลังใส่ key ลับอื่นจะรั่วทันที)
+   - ค่าเดียวกันยังถูก hardcode เป็น fallback ใน src/firebase.js บรรทัด 9-15
+   แนะนำ: ลบ fallback ออก ให้ throw error ถ้าไม่มี env, ไปตั้ง API key restriction
+   (HTTP referrer) ใน Google Cloud Console และเปิด Firebase App Check
+
+A3 [ต่ำ] ไฟล์ prompt ของ AI กองอยู่ที่ root
+   gemini-code-*.md, initial_prompt_setup (1).md, prompt3.md, prompt_phase2_upgrade (2).md,
+   prompt_ui_fixes.md, notification1.md, toolbar1.md
+   แนะนำ: ย้ายไปโฟลเดอร์ docs/ (และตั้งชื่อไฟล์ไม่ให้มีช่องว่าง/วงเล็บ) หรือลบออก
+
+A4 [ต่ำ] ไม่มี README.md อธิบายวิธีติดตั้ง/รัน/deploy, บัญชีทดสอบ, โครงสร้างข้อมูล
+
+A5 [ต่ำ] dependency ที่ติดตั้งแต่ไม่ได้ใช้: vue-router (ไม่มีการ import ที่ไหนเลย)
+   - แอปจึงไม่มี routing: ทุกอย่างเป็น modal ในหน้าเดียว, กด back ไม่ได้, แชร์ลิงก์แผงไม่ได้
+   แนะนำ: ใช้ vue-router แยกหน้า /admin, /map, /login และใส่ route guard ตาม role
+   หรือถ้าไม่ใช้ก็ถอนออก
+
+A6 [ต่ำ] ไม่มี ESLint / Prettier / test (Vitest) / CI ใด ๆ
+   - firebase.js ใช้เซมิโคลอน + double quote ส่วนไฟล์อื่นไม่ใช้ -> style ไม่สม่ำเสมอ
+
+A7 [ต่ำ] index.html อ้าง /vite.svg แต่ไม่มีโฟลเดอร์ public/ -> favicon 404
+
+A8 [ต่ำ] โครงสร้างไฟล์สับสน
+   - src/firebase/config.js เป็นแค่ไฟล์ re-export 1 บรรทัดของ src/firebase.js
+   - src/types/market.js ไม่ได้เป็น type แต่เป็นข้อมูลตัวอย่าง (seed data/constants)
+     ควรเปลี่ยนชื่อเป็น src/constants/ หรือ src/data/defaults.js
+   - NotificationCenter.vue อยู่ในโฟลเดอร์ Auth/ ทั้งที่ไม่เกี่ยวกับ auth
+
+
+===============================================================================
+ B. ความปลอดภัย / สิทธิ์การเข้าถึง / ข้อมูลส่วนบุคคล (PDPA)
+===============================================================================
+
+B1 [วิกฤต] firestore.rules เปิดเขียนสาธารณะ
+   - markets:       allow write: if true          (ใครก็แก้/ลบผังตลาดได้)
+   - stalls:        allow create, update, delete: if true
+   - notifications: allow read, write: if true    (ใครก็อ่าน/ลบแจ้งเตือนของคนอื่นได้)
+   - bookings:      allow read: if true           (ชื่อ+เบอร์โทรลูกค้าทุกคนอ่านได้สาธารณะ)
+   แนะนำ: ตรวจ role จาก custom claims หรือจาก get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+   และแยกสิทธิ์: อ่านผังได้ทุกคน, เขียนผังเฉพาะ admin/owner, notification อ่านได้เฉพาะ
+   resource.data.tenantId == request.auth.uid
+
+B2 [วิกฤต] ฟังก์ชัน isAdmin() ในกฎผิด
+   firestore.rules บรรทัด 12:
+     request.auth.token.role == 'admin' || request.auth.token.email != null
+   -> ผู้ใช้ทุกคนที่สมัครด้วยอีเมลถือว่าเป็น admin ทั้งหมด
+
+B3 [วิกฤต] collection users อ่านได้โดย "ทุกคนที่ล็อกอิน" รวมถึง anonymous
+   - firebaseService.js initAuthListener() สั่ง signInAnonymously อัตโนมัติให้ทุกผู้เข้าชม
+   - users เก็บ phone และ citizenId (เลขบัตรประชาชน)
+   -> ผู้เข้าชมเว็บใครก็ได้สามารถดึงเลขบัตรประชาชนของผู้ใช้ทุกคนได้ = ผิด PDPA
+   แนะนำ: allow read: if request.auth.uid == userId || isAdmin()
+   และพิจารณาว่าจำเป็นต้องเก็บเลขบัตรประชาชนจริงหรือไม่
+
+B4 [วิกฤต] ผู้ใช้เขียน document ของตัวเองได้ทั้งหมด รวมถึงฟิลด์ role
+   - rules: allow write: if request.auth.uid == userId
+   - AuthModal.vue บรรทัด 128-138 ให้ผู้สมัคร "เลือก role เองได้" รวมถึง owner/admin
+   แนะนำ: สมัครได้แค่ tenant, ห้ามแก้ฟิลด์ role ใน rules
+   (request.resource.data.role == resource.data.role) และให้ owner เป็นคนเลื่อนสิทธิ์
+
+B5 [วิกฤต] authStore เริ่มต้นเป็น "ล็อกอินแล้ว" เสมอ
+   - authStore.js บรรทัด 42-43: currentUser = DEMO_USERS.tenant, isAuthenticated: true
+   - ดังนั้นเงื่อนไข "ต้องล็อกอินก่อนจอง" ใน BookingModal.vue บรรทัด 20 ไม่มีวันทำงาน
+   - หลัง logout แล้ว refresh หน้า จะกลับมาเป็น demo tenant อีก
+
+B6 [วิกฤต] ปุ่ม Quick Demo Role Switch (Owner/Admin/Tenant) แสดงให้ทุกคนใช้ได้
+   - AuthModal.vue บรรทัด 33-66 -> ใครก็กดเป็น Owner ได้ทันทีโดยไม่ต้องใช้รหัสผ่าน
+   - DEMO_USERS มีเลขบัตรประชาชน/เบอร์โทร (ข้อมูลสมมติ) ฝังในโค้ด
+   แนะนำ: แสดงเฉพาะเมื่อ import.meta.env.DEV หรือมี flag VITE_DEMO_MODE
+
+B7 [วิกฤต] ไม่มีการป้องกันโหมด Admin Builder
+   - Navbar.vue บรรทัด 34-43: ปุ่ม "Admin Builder" แสดงให้ทุก role กด
+   - marketStore.js บรรทัด 14: activeMode เริ่มต้นเป็น 'admin' -> ผู้เช่าเปิดเว็บมาเจอหน้าแก้ผังทันที
+   - ผู้เช่ากด "บันทึกผัง" -> เขียนลง Firestore ได้ (เพราะ rules เปิด)
+   แนะนำ: setMode('admin') ต้องเช็ค authStore.isAdmin, ค่าเริ่มต้นเป็น 'customer'
+
+B8 [สูง] สถานะผู้ใช้เชื่อจาก localStorage ('auth_user') โดยตรง
+   - แก้ค่าใน DevTools เป็น role: 'owner' ก็ได้สิทธิ์ทันที (ฝั่ง UI)
+   - authStore ไม่ได้ subscribe onAuthStateChanged เลย ทำให้ state ฝั่ง UI กับ Firebase Auth
+     ไม่ตรงกัน ส่วน marketStore มี currentUser ของตัวเองแยกอีกชุด (ซ้ำซ้อน)
+   แนะนำ: ใช้ onAuthStateChanged เป็นแหล่งความจริงเดียว แล้วโหลด profile จาก users/{uid}
+
+B9 [สูง] ข้อมูลผู้จอง (ชื่อ, เบอร์โทร, ประเภทสินค้า) ถูกฝังใน stalls[].bookedBy
+   ภายใน document markets/main-layout ซึ่ง allow read: if true
+   -> ลูกค้าทั่วไปเห็นเบอร์โทรของผู้เช่าทุกคน
+   แนะนำ: เก็บข้อมูลส่วนตัวไว้ใน bookings/{id} ที่อ่านได้เฉพาะเจ้าของ+admin
+   ในผังเก็บแค่ status และ bookingId
+
+B10 [กลาง] หลัง logout, initAuthListener จะ signInAnonymously อัตโนมัติอีกรอบ
+   (firebaseService.js บรรทัด 31-35) ทำให้ไม่มีสถานะ "ออกจากระบบ" จริง
+
+B11 [กลาง] มี console.log ข้อมูลภายในจำนวนมากใน production
+   เช่น firebase.js บรรทัด 35, firebaseService.js บรรทัด 55 log ข้อมูลผังทั้งหมด
+   (รวม bookedBy) ทุกครั้งที่มี snapshot
+
+
+===============================================================================
+ C. บั๊ก / Logic ผิด
+===============================================================================
+
+C1 [สูง] notification: id ของ document ใน Firestore ไม่ตรงกับ id ที่ใช้ลบ/อ่าน
+   - notificationStore.js บรรทัด 143 และ 175 สร้าง id เองแบบ 'notif-xxx' แล้ว addDoc()
+     ซึ่ง Firestore สร้าง doc id แบบสุ่มอีกตัว
+   - บรรทัด 98: remoteItems.push({ id, ...data }) -> data.id ('notif-xxx') ทับ doc id
+   - markAsRead / deleteNotification เรียก doc(db,'notifications', id) ด้วย 'notif-xxx'
+     ซึ่งไม่มีอยู่จริง -> update/delete ล้มเหลวแบบเงียบ (.catch(() => {}))
+   ผลคือ: กดอ่านแล้ว/ลบแล้ว ไม่ถูกบันทึกบน Firestore จริง แค่ซ่อนไว้ใน localStorage
+   แนะนำ: ใช้ setDoc(doc(db,'notifications', notifItem.id), ...) หรือไม่ใส่ฟิลด์ id
+   แล้วใช้ { ...data, id: docSnap.id }
+
+C2 [วิกฤต] การลบแจ้งเตือนส่งผลกับทุกคน
+   - clearAllNotifications() (บรรทัด 236-257) ลบทุก document ใน collection notifications
+     และปุ่ม "ล้างทั้งหมด" ใน NotificationCenter แสดงให้ tenant กดได้
+     -> ผู้เช่าคนหนึ่งกด = แจ้งเตือนของผู้เช่าทุกคนหายหมด
+   - autoCleanupIfSpammed() (บรรทัด 120-131) ถูกเรียกทุกครั้งที่เปิดแอป และถ้ามีเกิน 40
+     รายการจะลบทิ้งทั้งหมดของทุกคน (ข้อมูลหาย, และเป็นการแก้ปัญหาที่ปลายเหตุ)
+   แนะนำ: ลบเฉพาะของ user ตัวเอง, ถ้าต้องการ cleanup ให้ทำผ่าน Cloud Function / TTL policy
+
+C3 [สูง] tenant fallback 'demo-tenant-001' ทำให้แจ้งเตือนรั่วข้ามผู้ใช้
+   - notificationStore.js บรรทัด 53, 62, 214: filter รวม n.tenantId === 'demo-tenant-001'
+     ด้วยเสมอ -> ผู้เช่าทุกคนเห็นแจ้งเตือนของ demo tenant
+   - marketStore.js บรรทัด 537, 654, 701 และ firebaseService.js บรรทัด 156 ใช้
+     'demo-tenant-001' เป็นค่า default เมื่อไม่มี tenantId
+   - BookingModal.vue บรรทัด 272 ใช้ 'tenant-anon' (คนละค่ากัน ไม่สม่ำเสมอ)
+   แนะนำ: ถ้าไม่มี uid จริงต้องไม่อนุญาตให้จอง และไม่ส่งแจ้งเตือน
+
+C4 [วิกฤต] Admin กด "บันทึกผัง" อาจเขียนทับการจองของลูกค้า (Lost update)
+   - saveMarketLayoutToFirestore() เขียน array stalls ทั้งก้อนจาก state ในเครื่อง admin
+   - ระหว่างที่ admin กำลังแก้ ถ้ามีลูกค้าจองแผง X ลงไป แล้ว snapshot มาตอน isSaving = true
+     (marketStore.js บรรทัด 170 ข้าม snapshot) หรือ admin ยังถือ state เก่าอยู่
+     -> การจองของลูกค้าถูกเขียนทับเป็น 'available'
+   - การจองใช้ transaction แต่การ save ผังไม่ใช้ -> transaction ฝั่งจองไม่ได้ช่วยอะไร
+
+C5 [สูง] Snapshot ใหม่จาก Firestore เขียนทับงานที่ admin ยังไม่ได้บันทึก
+   - marketStore.js บรรทัด 172-183: ทุก snapshot แทนที่ this.stalls ทั้งหมด และตั้ง
+     hasUnsavedChanges = false + capture snapshot ใหม่
+   -> admin กำลังลากแผงอยู่ แล้วมีลูกค้าจองแผงอื่น = งานที่ลากไว้หายหมดโดยไม่มีการเตือน
+   แนะนำ (ทั้ง C4/C5): แยก stalls เป็น collection stalls/{stallId} (rules ก็เตรียมไว้แล้ว
+   แต่ไม่ได้ใช้), บันทึกเฉพาะแผงที่เปลี่ยน (dirtyStallsMap มีอยู่แล้วแต่ไม่ได้ใช้),
+   และ merge snapshot ระดับรายแผงแทนการแทนที่ทั้ง array
+
+C6 [สูง] การจองเขียน zones ของฝั่งลูกค้าทับลง Firestore
+   firebaseService.js บรรทัด 165-170: transaction.set(... zones: sanitizedZones ...)
+   -> ถ้า client ของลูกค้ามี zones เก่า (จาก localStorage) จะเขียนทับ zones ล่าสุดของ admin
+   แนะนำ: ใน transaction ให้อัปเดตเฉพาะแผงที่จอง ไม่ต้องส่ง name/zones
+
+C7 [สูง] บันทึกการจองล้มเหลวแต่ UI แจ้งว่าสำเร็จ
+   - saveLayoutToFirestore(): ถ้า Firestore error (res.success = false, ไม่ใช่ permission-denied)
+     จะไปตก else แจ้ง "✅ บันทึกผังตลาดเรียบร้อยแล้ว" (marketStore.js บรรทัด 605-606)
+   - catch บรรทัด 609-614 ก็แจ้ง success และตั้ง hasUnsavedChanges = false
+   -> ผู้ใช้คิดว่าบันทึกแล้วแต่จริง ๆ ไม่ได้บันทึก
+   - _sendBatchShiftNotifications() ถูกเรียก "ก่อน" save -> ถ้า save ล้มเหลว ผู้เช่าได้รับ
+     แจ้งเตือนเรื่องที่ไม่ได้เกิดขึ้นจริง ควรส่งหลัง save สำเร็จ
+
+C8 [สูง] StallEditorModal / ObjectEditorModal แสดงข้อมูลเก่า และกดบันทึกแล้วย้อนตำแหน่ง
+   - watch(() => props.stallId) (StallEditorModal.vue) ทำงานเฉพาะตอน id เปลี่ยน
+   - ขั้นตอนทำซ้ำ: เลือกแผง A -> เปิดแก้ไข -> ปิด -> ลากแผง A ไปที่ใหม่ -> เปิดแก้ไขอีกครั้ง
+     -> ฟอร์มยังแสดงตำแหน่งเดิม -> กดบันทึก = แผงกระโดดกลับที่เดิม
+   - ObjectEditorModal.vue มีปัญหาเดียวกัน
+   แนะนำ: watch [() => props.isOpen, () => props.stallId] แล้วโหลดฟอร์มใหม่ทุกครั้งที่เปิด
+
+C9 [กลาง] การปัดเศษเมตร 1 ตำแหน่งทำให้ขนาดแผงเพี้ยนเมื่อบันทึกจาก modal
+   - pxToM() ปัดเป็น 0.1 ม. (4px) เช่น แผง B01 สูง 90px = 2.25 ม. -> แสดง 2.3 -> บันทึกกลับ
+     เป็น 92px ทั้งที่ผู้ใช้ไม่ได้แก้อะไร
+   - ทำให้ diffing เห็นว่ามีการเปลี่ยน และส่งแจ้งเตือนผู้เช่าโดยไม่จำเป็น
+   แนะนำ: เก็บค่าในหน่วยเมตรเป็นแหล่งความจริง (หรือส่งเฉพาะฟิลด์ที่ผู้ใช้แก้จริง)
+
+C10 [กลาง] คลิกพื้นที่ว่าง "ภายในผัง" ไม่ deselect และไม่ pan
+   StallCanvas.vue บรรทัด 787: เช็คเฉพาะ e.target === canvasContainer หรือมี class
+   bg-dot-pattern แต่พื้นที่ส่วนใหญ่ถูก div ที่ scale/translate (บรรทัด 230) บังอยู่
+   -> คลิกที่ว่างในผังแล้ว e.target เป็น div นั้น จึงไม่เข้าเงื่อนไข
+
+C11 [กลาง] ZoneManagerModal แก้ชื่อ/สี/ราคาโซนผ่าน v-model ตรงเข้า store
+   (บรรทัด 79, 86, 99) ไม่ผ่าน updateZone() -> ไม่เรียก markUnsaved()
+   -> ปุ่มบันทึกไม่ขึ้น "*" และถ้า snapshot เข้ามา การแก้ไขหาย
+
+C12 [กลาง] ลบโซนแล้วแผงที่ใช้โซนนั้นกลายเป็น zoneId กำพร้า (แสดง "ไม่ระบุ")
+   removeZone() ไม่ตรวจว่ามีแผงใช้อยู่ และไม่ย้ายแผงไปโซนอื่น
+
+C13 [กลาง] ย่อขนาดตลาดแล้วแผงที่อยู่นอกขอบยังค้างอยู่ / ลากแผงออกนอกขอบขวา-ล่างได้
+   updateStallPosition() clamp แค่ >= 0 ไม่ clamp ด้านกว้าง/สูงสุด
+   ไม่มีตรวจการทับกันของแผง (overlap) กับแผงอื่นหรือทางเดิน
+
+C14 [กลาง] เลขแผงซ้ำได้
+   addStall() ตั้งชื่อ S-{count} จากจำนวนแผง -> ลบแผงแล้วเพิ่มใหม่ได้ชื่อซ้ำ
+   StallEditorModal ก็ไม่ตรวจ stallNo ซ้ำ
+
+C15 [กลาง] Admin เปลี่ยน status เป็น 'booked' เองได้โดยไม่มี bookedBy
+   -> diffing ไปหา tenantId ไม่เจอแล้ว fallback เป็น demo-tenant-001
+
+C16 [กลาง] การยกเลิกจอง (cancelBooking) ไม่อัปเดต collection bookings
+   และไม่ส่งแจ้งเตือนไปยังผู้เช่าโดยตรง (ต้องรอ diffing ตอน save)
+
+C17 [กลาง] state เริ่มต้นใน marketStore ใช้ JSON.parse(localStorage...) โดยไม่มี try/catch
+   (บรรทัด 28-30) -> ถ้าข้อมูลใน localStorage เสีย แอปขาวทั้งหน้า
+   notificationStore บรรทัด 41 ก็เช่นกัน
+
+C18 [กลาง] isRealFirebaseConfigured ถูก hardcode = true (firebase.js บรรทัด 33)
+   - โค้ด "Local Mode" fallback ทั้งหมดจึงเป็น dead code
+   - FirebaseSettingsModal.vue ยังบอกผู้ใช้ว่า "ปัจจุบันทำงานในโหมด Local PoC" ซึ่งไม่จริง
+   - badge "Firestore Online" แสดงเขียวเสมอแม้ connection หลุด (ควรใช้ isRealtimeConnected)
+
+
+===============================================================================
+ D. ระบบจอง / Business logic ที่ยังขาด
+===============================================================================
+
+D1 [สูง] การจองไม่มี "วันที่" หรือ "ช่วงเวลา"
+   - ราคาเป็น ฿/วัน แต่จองแล้วแผงเป็น 'booked' ถาวร ไม่มีวันเริ่ม/สิ้นสุด
+   - ตลาดนัดปกติจองเป็นรายวัน/รายสัปดาห์ ควรมี bookings ที่ผูกกับ stallId + date
+     และสถานะแผงคำนวณตามวันที่เลือก
+
+D2 [สูง] สลิปโอนเงินไม่ถูกเก็บจริง และการจองยืนยันทันที
+   - BookingModal อ่านรูปเป็น base64 แล้วส่ง slipUrl แต่ bookStallWithTransaction ไม่ได้บันทึก
+     (ดีแล้วที่ไม่เก็บ base64 ลง Firestore เพราะจะเกิน 1MB) -> สลิปหาย ตรวจสอบย้อนหลังไม่ได้
+   - สถานะเปลี่ยนเป็น 'booked' ทันทีโดยไม่มี admin ตรวจสลิป
+     (มีสถานะ 'pending' เขียนไว้ใน comment ของ types/market.js แต่ไม่ได้ใช้)
+   แนะนำ: อัปโหลดไป Firebase Storage, ตั้งสถานะ pending -> admin อนุมัติ -> booked
+   และจำกัดขนาด/ชนิดไฟล์
+
+D3 [กลาง] เลขบัตรประชาชนบังคับกรอกในฟอร์มจอง แต่ไม่ถูกส่งไปบันทึก
+   (BookingModal บรรทัด 253 ตรวจ แต่ firebaseService ไม่ได้เก็บ) -> เก็บข้อมูลเกินจำเป็น
+   ถ้าไม่ใช้ ควรเอาออก ถ้าใช้ต้องมีเหตุผลและแจ้งความยินยอมตาม PDPA
+
+D4 [กลาง] ปุ่มยืนยันจองไม่มี loading/disabled -> กดซ้ำได้หลายครั้ง
+   (BookingModal.vue บรรทัด 178-184)
+
+D5 [กลาง] ตรวจสอบข้อมูลเฉพาะฝั่ง client
+   rules ฝั่ง bookings ตรวจแค่ customerName != null และ stallId != null
+   ไม่ตรวจว่า stall ว่างจริง / ราคา / ผู้จองเป็นคนเดียวกับ request.auth.uid
+
+D6 [ต่ำ] เลข PromptPay '081-999-8888' hardcode ใน BookingModal บรรทัด 124
+   ควรเป็นค่าตั้งค่าของตลาด (เก็บใน markets doc)
+
+D7 [ต่ำ] "รายได้รวม" = ผลรวมราคา/วัน ของแผงที่ booked ไม่ได้สะท้อนรายได้จริง
+   (ไม่มีจำนวนวัน, ไม่สนใจสถานะการชำระเงิน)
+
+D8 [ต่ำ] ผังรองรับตลาดเดียว: hardcode doc id 'markets/main-layout' ในหลายที่
+
+
+===============================================================================
+ E. ประสิทธิภาพ
+===============================================================================
+
+E1 [กลาง] persistToLocal() ถูกเรียกทุก mousemove ระหว่างลาก/ย่อขยาย
+   (updateStallPosition/Size, updateLayoutObjectPosition/Size)
+   -> JSON.stringify ข้อมูลทั้งผัง 8 ครั้งต่อ event ทำให้ลากกระตุกเมื่อแผงเยอะ
+   แนะนำ: บันทึกตอน mouseup หรือ debounce
+
+E2 [กลาง] class transition-all duration-200 บนแผง/วัตถุขณะลาก -> ตำแหน่งตามเมาส์ช้า (lag)
+   แนะนำ: ปิด transition ระหว่าง isDragging
+
+E3 [กลาง] onSnapshot ของ notifications ดึงทั้ง collection โดยไม่ query/limit
+   (import query, orderBy, limit มาแล้วแต่ไม่ได้ใช้) แล้วค่อยตัดเหลือ 30 ใน client
+   แนะนำ: query(collection, where('tenantId','==',uid), orderBy('createdAt','desc'), limit(30))
+   และเพิ่ม composite index ใน firestore.indexes.json
+
+E4 [กลาง] เก็บทุกแผงใน document เดียว -> จำกัด 1MB, ทุกการจองต้องเขียนทั้ง document
+   (contention สูงเมื่อมีคนจองพร้อมกันหลายคน transaction จะ retry/ล้มบ่อย)
+
+E6 [กลาง] ผลทดสอบ build (vite build ไปที่โฟลเดอร์ชั่วคราว): build ผ่าน แต่ JS bundle เดียว
+   ขนาด 723.85 kB (gzip 180 kB) เกินเกณฑ์ 500 kB
+   แนะนำ: lazy-load modal ต่าง ๆ ด้วย defineAsyncComponent, แยกหน้า admin ด้วย route-level
+   code splitting, ไม่โหลด firebase/analytics ถ้าไม่ใช้
+
+E7 [กลาง] npm audit (เฉพาะ production deps) พบช่องโหว่ 11 รายการ (high 5, moderate 6)
+   และ dependency หลายตัวตามหลังเวอร์ชันล่าสุดหลาย major (firebase 10 -> 12, vite 5 -> 8,
+   pinia 2 -> 4, tailwind 3 -> 4) ควรวางแผนอัปเกรดทีละตัวและทดสอบ
+
+E5 [ต่ำ] Navbar บรรทัด 180: ปุ่มบันทึกใช้ animate-pulse ตลอดเวลาที่มีการแก้ไข รบกวนสายตา
+   และ unreadCount badge ก็ animate-pulse ตลอด
+
+
+===============================================================================
+ F. Code quality / Maintainability
+===============================================================================
+
+F1 [กลาง] โค้ดซ้ำ
+   - getIconComponent() ซ้ำ 3 ไฟล์ (StallCanvas, CustomerStallMap, ObjectEditorModal)
+   - getStatusLabel / class สถานะแผง ซ้ำระหว่าง admin กับ customer
+   - การเปลี่ยน class 'dark' บน <html> ซ้ำ 3 ที่ (initTheme, toggleTheme, setTheme)
+   - updateStall กับ updateLayoutObject, updateXxxPosition/Size ซ้ำ logic เกือบทั้งหมด
+   - StallCanvas มี handler mouse 6 ตัว + touch 6 ตัวที่เหมือนกัน
+   แนะนำ: แยกเป็น utils/icons.js, composables/useDragResize.js และใช้ Pointer Events
+   (pointerdown/move/up) ตัวเดียวรองรับทั้งเมาส์และทัช
+
+F2 [กลาง] StallCanvas.vue ยาว 835 บรรทัด และ marketStore.js 805 บรรทัด
+   แนะนำ: แยก component ย่อย (CanvasToolbar, StallBlock, LayoutObjectBlock, InspectorBar)
+   และแยก store (layoutStore, bookingStore, uiStore)
+
+F3 [กลาง] ฟังก์ชัน updateStall() / updateLayoutObject() แก้ object ที่ส่งเข้ามา (delete updates.widthM)
+   -> side effect กับ caller ควร clone ก่อน
+
+F4 [ต่ำ] state/field ที่ไม่ได้ใช้: dirtyStallsMap (เก็บแต่ไม่อ่าน), snapshotStallIfNew()
+   ชื่อไม่ตรงกับการทำงาน, isLoading, currentUser ใน marketStore, unused props/imports
+   (เช่น props ใน AuthModal/NotificationCenter, Trash2 import ซ้ำกับ TrashIcon)
+
+F5 [ต่ำ] _notifTimer เก็บเป็น property บน store instance แบบนอก state (ไม่ชัดเจน)
+
+F6 [ต่ำ] Error handling แบบกลืน error เงียบ: .catch(() => {}) และ try {} catch (e) {} ว่าง
+   (notificationStore บรรทัด 207-208, 230-231) ทำให้ไม่เห็นบั๊ก C1
+
+F7 [ต่ำ] สร้าง id ด้วย Date.now().toString(36) -> กดเร็ว ๆ ในมิลลิวินาทีเดียวกันได้ id ซ้ำ
+   แนะนำ crypto.randomUUID()
+
+F8 [ต่ำ] ไม่มี TypeScript / JSDoc type ของ Stall, Zone, LayoutObject, Notification
+   ทำให้ฟิลด์ไม่สม่ำเสมอ (เช่น bookedBy.tenantId vs bookedBy.uid, stallId ที่บางครั้งเป็น
+   string ต่อด้วย comma เมื่อ consolidated notification)
+
+
+===============================================================================
+ G. UI / UX / Accessibility
+===============================================================================
+
+G1 [กลาง] Modal ส่วนใหญ่ไม่รองรับ dark mode
+   AuthModal, BookingModal, NotificationCenter, FirebaseSettingsModal ใช้ bg-white ล้วน
+   ไม่มี class dark: -> เปิดใน dark mode จะเป็นกล่องขาวจ้า ไม่เข้ากับธีม
+
+G2 [กลาง] Tailwind class ที่ไม่มีอยู่จริงใน Tailwind v3.4 (ไม่มีผลอะไรเลย)
+   - shadow-xs (ใช้หลายสิบที่) -> v3 ไม่มี, ใน config ตั้งไว้ชื่อ subtle/card/floating
+   - backdrop-blur-xs -> v3 เริ่มที่ backdrop-blur-sm
+   แนะนำ: เพิ่มใน theme.extend หรือเปลี่ยนเป็น shadow-sm / ใช้ชื่อที่ประกาศไว้
+
+G3 [กลาง] Modal ไม่มี: ปิดด้วยปุ่ม Esc, คลิกพื้นหลังเพื่อปิด, focus trap, role="dialog",
+   aria-modal, aria-label บนปุ่มไอคอน (ปุ่ม X, ปุ่มลบ ฯลฯ มีแค่ title)
+
+G4 [กลาง] การลบแผง (โดยเฉพาะแผงที่มีผู้จอง), ลบโซน, "รีเซ็ตผัง", "ล้างแจ้งเตือนทั้งหมด"
+   ไม่มี dialog ยืนยัน และไม่มี undo
+   (resetToDefaults จะแทนที่ผังจริงด้วยข้อมูลตัวอย่าง ถ้ากดบันทึกต่อ ผังจริงหาย)
+
+G5 [กลาง] ไม่มีการเตือนก่อนออกจากหน้า (beforeunload) เมื่อมี hasUnsavedChanges
+   (แม้จะ persist ไว้ใน localStorage แต่ snapshot จาก Firestore จะเขียนทับ ดู C5)
+
+G6 [ต่ำ] Mobile: แถบ Navbar 2 แถว + toolbar ทับผัง, inspector pill ด้านล่างกว้างเกินจอ
+   (มีหลาย span ไม่ wrap), touch events ไม่ preventDefault -> หน้าเลื่อนไปพร้อมกับการลาก
+
+G7 [ต่ำ] Pan + Zoom: transform เป็น scale(...) translate(...) ทำให้ระยะ pan ถูกคูณด้วย zoom
+   (ที่ zoom 2x ลากเมาส์ 10px ผังเลื่อน 20px) และ container มี overflow-auto ซ้อนกับ pan
+   ไม่มีซูมด้วย ctrl+scroll / ซูมรอบตำแหน่งเมาส์
+
+G8 [ต่ำ] รูปแบบวันที่ใน NotificationCenter แสดงแค่เวลา (HH:mm) ไม่มีวันที่
+   แจ้งเตือนเมื่อวานกับวันนี้แยกไม่ออก
+
+G9 [ต่ำ] ข้อความปนไทย-อังกฤษไม่สม่ำเสมอ ("Admin Builder", "Customer Map", "Sign In")
+   และข้อความ toast ใน catch บอก "✅ สำเร็จ" ทั้งที่ error (ดู C7)
+
+G10 [ต่ำ] Rotation ของวัตถุ: หมุน 90/270 องศาแต่ width/height ไม่สลับ และ handle resize
+   หมุนตามไปด้วย ทำให้ลากปรับขนาดสวนทิศ
+
+
+===============================================================================
+ H. ลำดับการแก้ไขที่แนะนำ
+===============================================================================
+
+ระยะที่ 1 – ความปลอดภัยและ repo (ทำก่อน deploy ใด ๆ)
+  A1, A2, B1-B7, C2
+
+ระยะที่ 2 – บั๊กที่ทำข้อมูลหาย/ผิด
+  C1, C3, C4, C5, C6, C7, C8, C17, B9
+
+ระยะที่ 3 – Business logic ของการจอง
+  D1, D2, D3, D4, D5, C16
+
+ระยะที่ 4 – คุณภาพโค้ดและ UX
+  E1-E4, F1-F3, G1-G5, A4-A8 และข้อ [ต่ำ] ที่เหลือ
+
+===============================================================================
+ หมายเหตุ
+ - หมายเลขบรรทัดอ้างอิงจากโค้ด ณ commit e29283e
+ - ยังไม่ได้แก้ไขไฟล์ใดในโปรเจกต์ (ไฟล์นี้เป็นไฟล์ใหม่ไฟล์เดียว)
+===============================================================================
