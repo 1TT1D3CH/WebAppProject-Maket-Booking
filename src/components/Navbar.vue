@@ -29,8 +29,8 @@
           </div>
         </div>
 
-        <!-- Mode Toggle Switcher (Admin Builder / Customer Map) -->
-        <div class="flex items-center bg-slate-100 dark:bg-slate-950 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-inner">
+        <!-- Mode Toggle Switcher (Admin Builder / Customer Map) — เฉพาะ admin/owner -->
+        <div v-if="authStore.isAdmin" class="flex items-center bg-slate-100 dark:bg-slate-950 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-inner">
           <button
             @click="marketStore.setMode('admin')"
             class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
@@ -139,7 +139,7 @@
         </div>
 
         <!-- Canvas Toolbar Action Buttons (Only shown in Admin mode) -->
-        <div v-if="marketStore.activeMode === 'admin'" class="flex items-center space-x-2">
+        <div v-if="marketStore.activeMode === 'admin' && authStore.isAdmin" class="flex items-center space-x-2">
           
           <!-- Secondary Ghost Button: Market Size -->
           <button

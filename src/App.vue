@@ -14,14 +14,14 @@
     <main class="flex-1 relative overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
       <!-- Admin Dynamic Layout Builder -->
       <StallCanvas 
-        v-if="marketStore.activeMode === 'admin'"
+        v-if="marketStore.activeMode === 'admin' && authStore.isAdmin"
         @open-editor="isStallEditorOpen = true"
         @open-object-editor="isObjectEditorOpen = true"
       />
 
       <!-- Customer Interactive Booking View -->
       <CustomerStallMap 
-        v-else-if="marketStore.activeMode === 'customer'"
+        v-else
         @open-booking-modal="handleOpenBooking"
       />
     </main>
@@ -97,7 +97,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useMarketStore } from './stores/marketStore'
 import { useNotificationStore } from './stores/notificationStore'
 import { useAuthStore } from './stores/authStore'
@@ -133,6 +133,13 @@ onMounted(() => {
   authStore.initAuth()
   marketStore.initFirebaseSync()
   notificationStore.initNotificationSync()
+})
+
+// logout / ถูกลดสิทธิ์ขณะอยู่โหมด admin ให้กลับไปหน้าลูกค้า
+watch(() => authStore.isAdmin, (isAdmin) => {
+  if (!isAdmin && marketStore.activeMode === 'admin') {
+    marketStore.setMode('customer')
+  }
 })
 
 function handleOpenBooking(stall) {

@@ -7,10 +7,11 @@ import {
   bookStallWithTransaction
 } from '../services/firebaseService.js'
 import { useNotificationStore } from './notificationStore.js'
+import { useAuthStore } from './authStore.js'
 
 export const useMarketStore = defineStore('market', {
   state: () => ({
-    activeMode: 'admin', // 'admin' | 'customer'
+    activeMode: 'customer', // 'admin' | 'customer'
     theme: localStorage.getItem('app_theme') || 'light', // 'light' | 'dark'
     marketName: localStorage.getItem('market_name') || 'ตลาดยามเย็น Walking Street KKU',
     
@@ -183,7 +184,12 @@ export const useMarketStore = defineStore('market', {
     },
 
     setMode(mode) {
+      if (mode === 'admin' && !useAuthStore().isAdmin) {
+        this.showNotification('เฉพาะผู้ดูแลระบบหรือเจ้าของตลาดเท่านั้นที่เข้าโหมดแก้ไขผังได้', 'error')
+        return false
+      }
       this.activeMode = mode
+      return true
     },
 
     // ─── Toast Notification (UI only) ─────────────────────────────────────────
