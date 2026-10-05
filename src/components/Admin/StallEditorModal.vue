@@ -200,6 +200,7 @@
 import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Sliders, X, User, Trash2, Check, Maximize2 } from 'lucide-vue-next'
+import { formatThaiDateTime } from '../../utils/date'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -278,10 +279,11 @@ function cancelBooking() {
   }
 }
 
+// bookedAt อาจเป็น ISO string หรือแค่ 'yyyy-mm-dd' แสดงตามเวลาไทยเสมอ
 function formatDate(isoStr) {
   if (!isoStr) return '-'
   try {
-    return new Date(isoStr).toLocaleString('th-TH')
+    return formatThaiDateTime(isoStr)
   } catch {
     return isoStr
   }

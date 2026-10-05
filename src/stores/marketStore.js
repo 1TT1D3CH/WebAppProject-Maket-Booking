@@ -8,6 +8,7 @@ import {
 } from '../services/firebaseService.js'
 import { useNotificationStore } from './notificationStore.js'
 import { useAuthStore } from './authStore.js'
+import { formatThaiTime } from '../utils/date.js'
 
 export const useMarketStore = defineStore('market', {
   state: () => ({
@@ -173,7 +174,7 @@ export const useMarketStore = defineStore('market', {
             if (data.gridSnapMeters) this.gridSnapMeters = data.gridSnapMeters
             
             this.isRealtimeConnected = true
-            this.lastSavedTime = new Date().toLocaleTimeString('th-TH')
+            this.lastSavedTime = formatThaiTime(new Date())
             this.hasUnsavedChanges = false
             this._captureInitialStallsState()
             this.persistToLocal()
@@ -586,7 +587,7 @@ export const useMarketStore = defineStore('market', {
           },
           this.layoutObjects
         )
-        this.lastSavedTime = new Date().toLocaleTimeString('th-TH')
+        this.lastSavedTime = formatThaiTime(new Date())
         this.hasUnsavedChanges = false
 
         // 3. อัปเดต snapshot ให้เป็นปัจจุบันหลังบันทึกเสร็จสมบูรณ์

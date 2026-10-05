@@ -126,6 +126,7 @@ import { useAuthStore } from '../../stores/authStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useMarketStore } from '../../stores/marketStore'
 import { Bell, X, Trash2, CheckCircle2, CheckCheck } from 'lucide-vue-next'
+import { formatThaiTime } from '../../utils/date'
 
 const props = defineProps({
   isOpen: Boolean
@@ -168,7 +169,7 @@ async function handleClearAll() {
 function formatDate(isoStr) {
   if (!isoStr) return ''
   try {
-    return new Date(isoStr).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    return formatThaiTime(isoStr)
   } catch (e) {
     return isoStr
   }
