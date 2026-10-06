@@ -43,6 +43,17 @@
           </button>
           
           <button
+            @click="marketStore.setMode('members')"
+            class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
+            :class="marketStore.activeMode === 'members'
+              ? 'bg-purple-600 text-white shadow-sm shadow-purple-200 dark:shadow-none'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'"
+          >
+            <Users class="w-3.5 h-3.5" />
+            <span class="hidden sm:inline">Members</span>
+          </button>
+
+          <button
             @click="marketStore.setMode('customer')"
             class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
             :class="marketStore.activeMode === 'customer' 
@@ -96,8 +107,9 @@
             </span>
           </button>
 
-          <!-- Firebase Config Settings -->
+          <!-- Firebase Config Settings (เฉพาะโหมดพัฒนา) -->
           <button
+            v-if="isDev"
             @click="$emit('open-firebase-config')"
             class="p-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-xl border border-slate-200/80 dark:border-slate-700 shadow-xs transition-all duration-200 hover:scale-105"
             title="ตั้งค่า Firebase Config"
@@ -217,12 +229,14 @@ import {
   Save, 
   Palette, 
   Settings,
+  Users,
   Maximize2,
   Bell,
   Sun,
   Moon
 } from 'lucide-vue-next'
 
+const isDev = import.meta.env.DEV
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()

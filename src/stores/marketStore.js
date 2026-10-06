@@ -12,7 +12,7 @@ import { formatThaiTime } from '../utils/date.js'
 
 export const useMarketStore = defineStore('market', {
   state: () => ({
-    activeMode: 'customer', // 'admin' | 'customer'
+    activeMode: 'customer', // 'admin' | 'members' | 'customer'
     theme: localStorage.getItem('app_theme') || 'light', // 'light' | 'dark'
     marketName: localStorage.getItem('market_name') || 'ตลาดยามเย็น Walking Street KKU',
     
@@ -185,7 +185,7 @@ export const useMarketStore = defineStore('market', {
     },
 
     setMode(mode) {
-      if (mode === 'admin' && !useAuthStore().isAdmin) {
+      if ((mode === 'admin' || mode === 'members') && !useAuthStore().isAdmin) {
         this.showNotification('เฉพาะผู้ดูแลระบบหรือเจ้าของตลาดเท่านั้นที่เข้าโหมดแก้ไขผังได้', 'error')
         return false
       }

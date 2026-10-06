@@ -20,6 +20,9 @@
         @open-market-settings="isMarketSettingsOpen = true"
       />
 
+      <!-- Member list (owner/admin only) -->
+      <MembersPanel v-else-if="marketStore.activeMode === 'members' && authStore.isAdmin" />
+
       <!-- Customer Interactive Booking View -->
       <CustomerStallMap 
         v-else
@@ -59,6 +62,7 @@
     />
 
     <FirebaseSettingsModal 
+      v-if="isDev"
       :is-open="isFirebaseConfigOpen"
       @close="isFirebaseConfigOpen = false"
     />
@@ -66,6 +70,13 @@
     <AuthModal 
       :is-open="isAuthOpen"
       @close="isAuthOpen = false"
+      @open-change-password="isChangePasswordOpen = true"
+    />
+
+    <ChangePasswordModal
+      :is-open="mustChangePassword || isChangePasswordOpen"
+      :forced="mustChangePassword"
+      @close="isChangePasswordOpen = false"
     />
 
     <CompleteProfileModal
@@ -122,6 +133,8 @@ import FirebaseSettingsModal from './components/FirebaseSettingsModal.vue'
 import AuthModal from './components/Auth/AuthModal.vue'
 import CompleteProfileModal from './components/Auth/CompleteProfileModal.vue'
 import NotificationCenter from './components/Auth/NotificationCenter.vue'
+import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
+import MembersPanel from './components/Admin/MembersPanel.vue'
 
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
@@ -134,9 +147,12 @@ const isBookingModalOpen = ref(false)
 const isFirebaseConfigOpen = ref(false)
 const isAuthOpen = ref(false)
 const isNotificationsOpen = ref(false)
+const isChangePasswordOpen = ref(false)
+const isDev = import.meta.env.DEV
 const bookingTargetStall = ref(null)
 
 const notificationStore = useNotificationStore()
+const mustChangePassword = computed(() => authStore.currentUser?.mustChangePassword === true)
 
 onMounted(() => {
   authStore.initAuth()
@@ -162,7 +178,7 @@ watch(
 
 // logout / ถูกลดสิทธิ์ขณะอยู่โหมด admin ให้กลับไปหน้าลูกค้า
 watch(() => authStore.isAdmin, (isAdmin) => {
-  if (!isAdmin && marketStore.activeMode === 'admin') {
+  if (!isAdmin && ['admin', 'members'].includes(marketStore.activeMode)) {
     marketStore.setMode('customer')
   }
 })

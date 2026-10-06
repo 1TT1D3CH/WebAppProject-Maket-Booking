@@ -1,0 +1,95 @@
+===============================================================================
+ สรุปงานวันที่ 2026-10-07 : รวมงานเข้า main และสิ่งที่ต้องทำเอง
+ โปรเจกต์: Dynamic Market Stall Booking System (Vue 3 + Pinia + Firebase)
+===============================================================================
+
+-------------------------------------------------------------------------------
+ 1. ที่มา
+-------------------------------------------------------------------------------
+  repo ค้างอยู่กลาง interactive rebase (2 จาก 25 คำสั่ง, conflict ที่ dist/ และ
+  node_modules/.bin) ขณะที่ branch main (c1cbc55 "version 0.4") มีงานใหม่กว่า
+  (Google sign-in, ลืมรหัสผ่าน, toolbar ใหม่, date util, tests)
+  ตัดสินใจ: ยึด main เป็นหลัก แล้วย้ายงานที่มีเฉพาะใน working tree เข้าไป
+
+-------------------------------------------------------------------------------
+ 2. สิ่งที่ทำ (ตามขั้นตอนที่สั่ง)
+-------------------------------------------------------------------------------
+  (1) สำรองไฟล์เฉพาะ + .env + ไฟล์ที่แก้แล้ว ไว้นอก repo (โฟลเดอร์ scratchpad):
+        C:\Users\USER_W~1\AppData\Local\Temp\claude\
+        D--Downloads-KKU-Works-WebApp-Project\
+        be2773f0-ce3c-47af-8ad7-ebb064f2e364\scratchpad\{keep,backup}
+      และสร้าง tag  pre-abort-backup -> c1cbc55
+  (2) git rebase --abort + git checkout main
+      - abort ครั้งแรกถูกปฏิเสธ เพราะไฟล์ prompt/*.md 8 ไฟล์ที่ยังไม่ track ชื่อชนกับ
+        ไฟล์ใน main -> ย้ายออกหลังตรวจว่าเหมือนสำรองทุกไบต์ แล้ว abort สำเร็จ
+        (ไฟล์ prompt ชุดนั้นใช้ตัวที่อยู่ใน main)
+      - abort ลบ .env ออกจากดิสก์ (main ไม่ track .env) -> กู้คืนจากสำรองแล้ว
+  (3) นำงานกลับมารวมโดยไม่ทับของ main:
+      เพิ่มไฟล์ใหม่ (ไม่มีใน main):
+        src/components/Admin/MembersPanel.vue    หน้ารายชื่อสมาชิก (owner/admin)
+        src/components/Auth/ChangePasswordModal.vue
+        src/utils/loginId.js                     แปลง username -> อีเมลภายใน
+        scripts/seed-staff.mjs, delete-all-members.mjs
+        README.md, prompt/deploy-and-roles-th.md, prompt/hide-setup-modal-th.md
+      แก้ไฟล์ที่มีอยู่แล้ว (เพิ่มเฉพาะส่วนที่ขาด ฟีเจอร์ของ main อยู่ครบ):
+        authStore.js   login() ผ่าน toLoginEmail + เพิ่ม changePassword()
+                       (Google login, ลืมรหัสผ่าน, ensureUserProfile ฯลฯ ไม่แตะ)
+        marketStore.js setMode รองรับโหมด 'members' (ต้องเป็น admin)
+        Navbar.vue     ปุ่ม Members; ปุ่มตั้งค่า Firebase แสดงเฉพาะตอน dev
+        App.vue        MembersPanel, ChangePasswordModal (บังคับเมื่อ
+                       mustChangePassword), FirebaseSettingsModal เฉพาะ dev
+        AuthModal.vue  ปุ่ม "เปลี่ยนรหัสผ่าน"; ช่องล็อกอินเป็น text (ไม่ใช่ email)
+                       เพื่อให้บัญชี owner/admin ใส่ username ได้
+                       และไม่มีคำว่า "ชื่อผู้ใช้" บนหน้าจอ ตามที่สั่ง
+        main.js        โหลด App แบบ dynamic: production ที่เริ่มแอปไม่ได้ (config ไม่ครบ)
+                       แสดง "ระบบขัดข้อง กรุณาลองใหม่ภายหลัง" ไม่เปิดเผย key/.env
+        vite.config.js build ล้มถ้าขาด VITE_FIREBASE_* ทั้ง 6 ตัว (เดิมไม่มีเช็ค)
+        package.json   เพิ่ม scripts seed:staff, delete:members, deploy*,
+                       และ devDependency firebase-admin (ใช้กับ scripts/)
+        .env.example   เพิ่ม VITE_PROMPTPAY_NUMBER, VITE_STAFF_EMAIL_DOMAIN
+      ไม่ได้ย้าย: firestore.rules / firebase.json / index.html ฯลฯ ของ working tree
+      (ใช้ของ main ซึ่งใหม่กว่าและมี test rules)
+  (4) .gitignore ของ main มี node_modules/ .env .env.* dist/ อยู่แล้ว และ main
+      ไม่ได้ track ทั้งสามอย่าง (git ls-files = 0) -> ไม่ต้อง git rm --cached
+  (5) ผลทดสอบ
+        npm run test:unit        44 ผ่าน / 0 ล้ม
+        npm run build (มี .env)   ผ่าน
+        npm run build (ไม่มี .env) ล้มพร้อมข้อความไทยบอกว่าขาด key ไหน
+      commit แล้ว แต่ "ยังไม่ push และไม่ deploy"
+
+-------------------------------------------------------------------------------
+ 3. ข้อควรรู้ / ข้อจำกัด
+-------------------------------------------------------------------------------
+  - ยังไม่ได้ทดสอบกับ Firebase จริงหรือเปิด browser: ล็อกอิน username, หน้า Members,
+    เปลี่ยนรหัสผ่านบังคับ ตรวจแค่ build + unit test ควรลองด้วยตัวเองก่อน deploy
+  - ไม่ได้รัน test:rules (ต้องใช้ firebase emulator)
+  - Members: owner เปลี่ยนสิทธิ์ผู้อื่นผ่านหน้านี้ได้ ตรงกับ rules ของ main
+    (admin อ่านรายชื่อได้ แต่เปลี่ยน role ไม่ได้)
+  - บัญชี owner/admin สร้างด้วย  npm run seed:staff -- --username owner001 --role owner
+    (ต้องมี credential ของ Firebase Admin ในเครื่อง: gcloud auth application-default login
+    หรือ GOOGLE_APPLICATION_CREDENTIALS) ข้อมูลโปรไฟล์ที่ script เขียน (mustChangePassword,
+    superUser) ควรตรวจกับ rules ของ main ก่อนใช้จริง
+  - package-lock.json เปลี่ยนมาก (เพิ่ม firebase-admin และ dependency ย่อย)
+  - ไม่ได้ commit: .agents/, .claude/, skills-lock.json (ไฟล์เครื่องมือ ไม่ใช่โค้ดโปรเจกต์)
+  - ข้อความ commit ของ main เดิมไม่ถูกแก้ history ใด ๆ
+
+-------------------------------------------------------------------------------
+ 4. สิ่งที่คุณต้องทำเอง
+-------------------------------------------------------------------------------
+  1) ตรวจ commit: git log -1 --stat   ถ้าพอใจค่อย git push
+  2) ลองรัน npm run dev: ล็อกอินอีเมล, ล็อกอิน Google, (ถ้ามีบัญชี staff) ล็อกอิน username,
+     เมนู Members, ปุ่มเปลี่ยนรหัสผ่าน
+  3) Deploy:  npm run deploy   (build + hosting + firestore rules/indexes)
+     แล้วเปิดเว็บใน Incognito ต้องไม่เห็นปุ่ม/modal ตั้งค่า Firebase
+  4) Firebase Console: เปิด Email/Password และ Google ใน Authentication,
+     เพิ่มโดเมนเว็บใน Authorized domains
+  5) ถ้า .env เคยถูก push ขึ้น GitHub ในประวัติเก่า ให้ตรวจว่าไม่มีความลับอื่นปนอยู่
+     (ค่า VITE_FIREBASE_* ไม่ใช่ความลับ)
+  6) เมื่อมั่นใจว่าไม่ต้องใช้แล้ว ลบ tag pre-abort-backup และโฟลเดอร์สำรองใน scratchpad
+
+-------------------------------------------------------------------------------
+ 5. งานที่เหลือตามรีวิว (docs/REVIEW_NEXT_STEPS.txt)
+-------------------------------------------------------------------------------
+  - markets/{id}: ผู้ล็อกอินทุกคนแก้ฟิลด์ stalls ได้ (ต้อง Cloud Function หรือแยกแผง)
+  - ตรวจซ้ำบั๊ก C4-C7, D1 (การจองยังไม่มีวันที่), D2 (สลิปไม่ถูกเก็บจริง)
+  - เพิ่ม test: loginId, authStore.login/changePassword

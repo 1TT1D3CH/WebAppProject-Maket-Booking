@@ -9,11 +9,15 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+  updatePassword
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { authErrorMessage, REDIRECT_FALLBACK_CODES } from '../utils/authErrors'
 import { useNotificationStore } from './notificationStore'
+import { toLoginEmail } from '../utils/loginId'
 
 // ปุ่มสลับบทบาททดสอบใช้ได้เฉพาะตอน dev หรือเมื่อเปิด VITE_DEMO_MODE=true เท่านั้น
 export const DEMO_ENABLED = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
@@ -295,7 +299,15 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async login(email, password) {
+    // loginId = อีเมล หรือชื่อผู้ใช้ของบัญชี owner/admin (เช่น owner001 -> owner001@<โดเมนภายใน>)
+    async login(loginId, password) {
+      const email = toLoginEmail(loginId)
+      if (!email) {
+        const message = authErrorMessage({ code: 'auth/invalid-credential' })
+        this.authError = message
+        return { success: false, error: message }
+      }
+
       this.isLoading = true
       this.authError = null
 
@@ -309,6 +321,23 @@ export const useAuthStore = defineStore('auth', {
         return { success: false, error: message }
       } finally {
         this.isLoading = false
+      }
+    },
+
+    async changePassword(currentPassword, newPassword) {
+      const user = auth?.currentUser
+      if (!user || !user.email) return { success: false, error: 'ยังไม่ได้เข้าสู่ระบบ' }
+      try {
+        await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword))
+        await updatePassword(user, newPassword)
+        if (this.currentUser?.mustChangePassword) {
+          await updateDoc(doc(db, 'users', user.uid), { mustChangePassword: false })
+          this.currentUser = { ...this.currentUser, mustChangePassword: false }
+        }
+        return { success: true }
+      } catch (err) {
+        console.error('เปลี่ยนรหัสผ่านไม่สำเร็จ:', err)
+        return { success: false, error: authErrorMessage(err, 'เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่') }
       }
     },
 
