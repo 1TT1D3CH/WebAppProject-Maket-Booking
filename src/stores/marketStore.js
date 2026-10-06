@@ -9,6 +9,7 @@ import {
 import { useNotificationStore } from './notificationStore.js'
 import { useAuthStore } from './authStore.js'
 import { formatThaiTime } from '../utils/date.js'
+import { buildStallWrites, mergeRemoteStalls } from '../utils/stallSync.js'
 
 export const useMarketStore = defineStore('market', {
   state: () => ({
@@ -48,6 +49,10 @@ export const useMarketStore = defineStore('market', {
 
     // การเปลี่ยนแปลงที่ยังไม่ได้บันทึก
     hasUnsavedChanges: false,
+
+    // true เมื่อแผงอยู่ใน Firestore (markets/main-layout/stalls) แล้ว
+    // false = ข้อมูลเก่า/ยังไม่เคยบันทึก ต้องเขียนแผงทั้งหมดตอน admin บันทึกครั้งแรก
+    stallsInFirestore: false,
 
     /**
      * Snapshots และ Dirty tracking ตาม notification1.md
@@ -165,18 +170,29 @@ export const useMarketStore = defineStore('market', {
             // หากอยู่ระหว่างการบันทึกผังของ Admin ให้ข้าม เพื่อไม่ให้ snapshot ล่วงหน้ามาลบล้าง Diffing
             if (this.isSaving) return
 
-            if (data.stalls && data.stalls.length > 0) this.stalls = data.stalls
-            if (data.zones && data.zones.length > 0) this.zones = data.zones
-            if (data.layoutObjects && data.layoutObjects.length > 0) this.layoutObjects = data.layoutObjects
-            if (data.name) this.marketName = data.name
-            if (data.marketWidthMeters) this.marketWidthMeters = data.marketWidthMeters
-            if (data.marketHeightMeters) this.marketHeightMeters = data.marketHeightMeters
-            if (data.gridSnapMeters) this.gridSnapMeters = data.gridSnapMeters
-            
+            this.stallsInFirestore = data.stallsInFirestore
+            const hadUnsaved = this.hasUnsavedChanges
+
+            if (data.stalls && data.stalls.length > 0) {
+              // มีงานที่ admin ยังไม่ได้บันทึก: รวมเฉพาะการจองใหม่ ไม่ทับงานที่แก้ไว้ (C5)
+              const merged = mergeRemoteStalls(this.stalls, data.stalls, this.initialStallsState, hadUnsaved)
+              this.stalls = merged.stalls
+              if (merged.initial) this.initialStallsState = merged.initial
+            }
+
+            if (!hadUnsaved) {
+              if (data.zones && data.zones.length > 0) this.zones = data.zones
+              if (data.layoutObjects && data.layoutObjects.length > 0) this.layoutObjects = data.layoutObjects
+              if (data.name) this.marketName = data.name
+              if (data.marketWidthMeters) this.marketWidthMeters = data.marketWidthMeters
+              if (data.marketHeightMeters) this.marketHeightMeters = data.marketHeightMeters
+              if (data.gridSnapMeters) this.gridSnapMeters = data.gridSnapMeters
+              this.hasUnsavedChanges = false
+              this._captureInitialStallsState()
+            }
+
             this.isRealtimeConnected = true
             this.lastSavedTime = formatThaiTime(new Date())
-            this.hasUnsavedChanges = false
-            this._captureInitialStallsState()
             this.persistToLocal()
           },
           () => { this.isRealtimeConnected = false }
@@ -522,36 +538,36 @@ export const useMarketStore = defineStore('market', {
     async bookStall(stallId, customerInfo) {
       const stall = this.stalls.find(s => s.id === stallId)
       if (!stall) return false
-      
+
       if (stall.status === 'booked') {
         this.showNotification(`แผงค้า ${stall.stallNo} ถูกจองไปแล้ว!`, 'error')
         return false
       }
 
-      try {
-        const res = await bookStallWithTransaction(
-          stallId, customerInfo, this.stalls, this.marketName, this.zones
-        )
+      if (!customerInfo?.tenantId) {
+        this.showNotification('กรุณาเข้าสู่ระบบก่อนจองแผงค้า', 'error')
+        return false
+      }
 
+      try {
+        const res = await bookStallWithTransaction(stallId, customerInfo)
+
+        // เก็บเฉพาะ id ในเอกสารแผง (ชื่อ/เบอร์โทรอยู่ใน bookings) และไม่นับเป็นการแก้ของ admin
         stall.status = 'booked'
-        stall.bookedBy = {
-          tenantId: customerInfo.tenantId || 'demo-tenant-001',
-          name: customerInfo.name,
-          phone: customerInfo.phone,
-          goodsType: customerInfo.goodsType,
-          bookedAt: new Date().toISOString()
+        stall.bookedBy = res.bookedBy
+        if (this.initialStallsState[stallId]) {
+          this.initialStallsState[stallId] = { ...this.initialStallsState[stallId], status: 'booked', bookedBy: res.bookedBy }
         }
         this.persistToLocal()
 
-        if (res.mode === 'firestore') {
-          this.showNotification(`จองแผงค้า ${stall.stallNo} สำเร็จแล้ว! (บันทึก Firestore)`, 'success')
-        } else {
-          this.showNotification(`จองแผงค้า ${stall.stallNo} สำเร็จ! (โหมด Local)`, 'success')
-        }
+        this.showNotification(`จองแผงค้า ${stall.stallNo} สำเร็จแล้ว!`, 'success')
         return true
       } catch (err) {
         console.error('Booking Error:', err)
-        this.showNotification(err.message || 'เกิดข้อผิดพลาดในการจองแผงค้า', 'error')
+        this.showNotification(
+          err.code === 'permission-denied' ? 'ไม่มีสิทธิ์จองแผงนี้ (อาจถูกจองไปแล้ว) กรุณารีเฟรชหน้า' : (err.message || 'เกิดข้อผิดพลาดในการจองแผงค้า'),
+          'error'
+        )
         return false
       }
     },
@@ -567,52 +583,69 @@ export const useMarketStore = defineStore('market', {
     },
 
     // ─── Save Layout + Batch Notification ────────────────────────────────────
+    /**
+     * @returns {Promise<boolean>} true เมื่อบันทึกลง Firestore สำเร็จจริง
+     * ล้มเหลว -> แจ้ง error, คง hasUnsavedChanges ไว้ และไม่ส่งแจ้งเตือนผู้เช่า (C7)
+     */
     async saveLayoutToFirestore(silent = false) {
       this.isSaving = true
       this.persistToLocal()
 
       try {
-        // 1. ทำการ Diffing และส่ง Notification ก่อนที่ Firestore realtime listener จะมารีเซ็ต snapshot
-        const notifCount = await this._sendBatchShiftNotifications()
+        // เขียนเฉพาะแผงที่ admin เปลี่ยนจริง (ไม่ส่งทั้งก้อน กันเขียนทับการจองที่เข้ามาระหว่างแก้ผัง — C4)
+        // ถ้ายังไม่มีแผงใน Firestore ให้เขียนทั้งหมด (ย้ายจากโครงสร้างเก่า / ผังใหม่)
+        const stallWrites = buildStallWrites(this.stalls, this.stallsInFirestore ? this.initialStallsState : {})
 
-        // 2. บันทึกผังตลาดลง Firestore
         const res = await saveMarketLayoutToFirestore(
-          this.marketName, 
-          this.zones, 
-          this.stalls, 
+          this.marketName,
+          this.zones,
           {
             marketWidthMeters: this.marketWidthMeters,
             marketHeightMeters: this.marketHeightMeters,
             gridSnapMeters: this.gridSnapMeters
           },
-          this.layoutObjects
+          this.layoutObjects,
+          stallWrites
         )
+
+        if (!res.success) {
+          this.hasUnsavedChanges = true
+          this.showNotification(
+            res.error?.code === 'permission-denied'
+              ? 'บันทึกไม่สำเร็จ: ไม่มีสิทธิ์แก้ไขผังตลาด'
+              : 'บันทึกผังไม่สำเร็จ กรุณาลองใหม่ (ข้อมูลที่แก้ยังอยู่ในเครื่อง)',
+            'error'
+          )
+          return false
+        }
+
+        // ส่งแจ้งเตือนผู้เช่า "หลัง" บันทึกสำเร็จเท่านั้น และก่อน capture snapshot ใหม่
+        let notifCount = 0
+        try {
+          notifCount = await this._sendBatchShiftNotifications()
+        } catch (err) {
+          console.warn('Send notifications notice:', err)
+        }
+
+        this.stallsInFirestore = true
         this.lastSavedTime = formatThaiTime(new Date())
         this.hasUnsavedChanges = false
-
-        // 3. อัปเดต snapshot ให้เป็นปัจจุบันหลังบันทึกเสร็จสมบูรณ์
         this._captureInitialStallsState()
 
         if (!silent) {
-          if (notifCount > 0) {
-            this.showNotification(
-              `✅ บันทึกผังสำเร็จ และส่งแจ้งเตือนไปยังผู้เช่า ${notifCount} ราย`,
-              'success'
-            )
-          } else if (res.success && res.mode === 'firestore') {
-            this.showNotification('✅ บันทึกผังตลาดลง Firebase Firestore สำเร็จ!', 'success')
-          } else if (res.error?.code === 'permission-denied') {
-            this.showNotification('บันทึกในเครื่องสำเร็จ (กรุณาเปิดสิทธิ์ Rules บน Firebase Console)', 'warning')
-          } else {
-            this.showNotification('✅ บันทึกผังตลาดเรียบร้อยแล้ว', 'success')
-          }
+          this.showNotification(
+            notifCount > 0
+              ? `✅ บันทึกผังสำเร็จ และส่งแจ้งเตือนไปยังผู้เช่า ${notifCount} ราย`
+              : '✅ บันทึกผังตลาดลง Firebase Firestore สำเร็จ!',
+            'success'
+          )
         }
+        return true
       } catch (err) {
-        console.warn('Save Layout notice:', err)
-        if (!silent) {
-          this.showNotification('✅ บันทึกข้อมูลเรียบร้อยแล้ว (โหมด Local Storage)', 'success')
-        }
-        this.hasUnsavedChanges = false
+        console.error('Save Layout error:', err)
+        this.hasUnsavedChanges = true
+        if (!silent) this.showNotification('บันทึกผังไม่สำเร็จ กรุณาลองใหม่', 'error')
+        return false
       } finally {
         this.isSaving = false
       }
@@ -651,8 +684,8 @@ export const useMarketStore = defineStore('market', {
         const tenantId = stall.bookedBy?.tenantId || 
                          stall.bookedBy?.uid || 
                          oldSnap?.bookedBy?.tenantId || 
-                         oldSnap?.bookedBy?.uid || 
-                         'demo-tenant-001'
+                         oldSnap?.bookedBy?.uid
+        if (!tenantId) continue // ไม่ทราบผู้เช่า ไม่ส่งแจ้งเตือน (เลิก fallback ไปบัญชี demo — C3)
 
         if (!oldSnap) {
           // แผงนี้เพิ่งถูกสร้างหรือเพิ่งเปลี่ยนสถานะมาเป็น booked
@@ -699,7 +732,7 @@ export const useMarketStore = defineStore('market', {
       // ตรวจสอบแผงที่มีผู้เช่าและถูกลบระหว่างรอบการแก้ไข
       if (this.deletedBookedStalls && this.deletedBookedStalls.length > 0) {
         for (const delStall of this.deletedBookedStalls) {
-          const tenantId = delStall.bookedBy?.tenantId || delStall.bookedBy?.uid || 'demo-tenant-001'
+          const tenantId = delStall.bookedBy?.tenantId || delStall.bookedBy?.uid
           if (tenantId) {
             if (!tenantChangesMap.has(tenantId)) {
               tenantChangesMap.set(tenantId, [])

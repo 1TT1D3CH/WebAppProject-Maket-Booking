@@ -150,9 +150,9 @@
           <span>ข้อมูลผู้จอง</span>
         </h4>
         <div v-if="form.bookedBy" class="text-xs text-slate-700 space-y-1 font-medium">
-          <p><strong>ชื่อผู้จอง:</strong> {{ form.bookedBy.name }}</p>
-          <p><strong>เบอร์โทรศัพท์:</strong> {{ form.bookedBy.phone }}</p>
-          <p><strong>ประเภทสินค้า:</strong> {{ form.bookedBy.goodsType || 'ไม่ระบุ' }}</p>
+          <p><strong>ชื่อผู้จอง:</strong> {{ bookingDetail?.name || '-' }}</p>
+          <p><strong>เบอร์โทรศัพท์:</strong> {{ bookingDetail?.phone || '-' }}</p>
+          <p><strong>ประเภทสินค้า:</strong> {{ bookingDetail?.goodsType || 'ไม่ระบุ' }}</p>
           <p class="text-[11px] text-slate-500"><strong>เวลาที่จอง:</strong> {{ formatDate(form.bookedBy.bookedAt) }}</p>
         </div>
         <div v-else class="text-xs text-slate-500 italic">ไม่มีข้อมูลผู้จอง</div>
@@ -201,6 +201,7 @@ import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Sliders, X, User, Trash2, Check, Maximize2 } from 'lucide-vue-next'
 import { formatThaiDateTime } from '../../utils/date'
+import { fetchBooking } from '../../services/firebaseService'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -223,6 +224,21 @@ const form = ref({
   notes: '',
   bookedBy: null
 })
+
+// ชื่อ/เบอร์โทรผู้จองไม่อยู่ในเอกสารแผง (อ่านได้สาธารณะ) ดึงจาก bookings ซึ่ง admin อ่านได้
+const bookingDetail = ref(null)
+watch(() => form.value.bookedBy, async (bookedBy) => {
+  bookingDetail.value = null
+  if (!bookedBy) return
+  if (bookedBy.name || bookedBy.phone) {
+    bookingDetail.value = bookedBy // ข้อมูลตัวอย่าง/ข้อมูลเก่าที่ยังฝังในแผง
+    return
+  }
+  const b = await fetchBooking(bookedBy.bookingId)
+  if (b && form.value.bookedBy?.bookingId === bookedBy.bookingId) {
+    bookingDetail.value = { name: b.customerName, phone: b.customerPhone, goodsType: b.goodsType }
+  }
+}, { immediate: true })
 
 watch(() => props.stallId, (newId) => {
   if (newId) {

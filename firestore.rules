@@ -30,33 +30,44 @@ service cloud.firestore {
     }
 
     // ─── Markets (Layout Configuration) ──────────────────────────────────────
+    // เอกสารผัง (ชื่อ, โซน, วัตถุ, ขนาด): ทุกคนอ่านได้ แก้ได้เฉพาะ owner/admin
+    // แผงค้าแยกเป็น markets/{id}/stalls/{stallId} ผู้เช่าไม่มีสิทธิ์แก้เอกสารผังเลย
     match /markets/{marketId} {
       allow read: if true; // ลูกค้าและคนทั่วไปอ่านผังตลาดได้
-      allow create, delete: if isAdmin();
+      allow create, update, delete: if isAdmin();
 
-      // Admin แก้ผังได้ทั้งหมด
-      // ผู้เช่าที่ล็อกอินจริงอัปเดตได้เฉพาะฟิลด์ stalls/updatedAt (ใช้ตอน transaction การจอง)
-      // TODO(ระยะที่ 2 – C4, C6, B9): ข้อนี้เป็นการผ่อนปรนชั่วคราว เพราะแผงทั้งหมดยังอยู่ใน
-      // array เดียวใน markets doc ซึ่ง rules ตรวจระดับรายแผงไม่ได้ และข้อมูลผู้จอง
-      // (ชื่อ, เบอร์โทร) ยังฝังอยู่ใน stalls[].bookedBy ที่อ่านได้สาธารณะ
-      // ระยะที่ 2 จะแยกแผงไปเป็น stalls/{stallId} และย้ายข้อมูลส่วนตัวไปที่ bookings
-      allow update: if isAdmin()
-        || (isNotAnonymous()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stalls', 'updatedAt']));
+      // แผงค้ารายแผง
+      // - อ่าน: ทุกคน (ไม่มีข้อมูลส่วนบุคคล; bookedBy มีแค่ tenantId/bookedAt/bookingId)
+      // - สร้าง/ลบ/แก้ผัง (ตำแหน่ง ราคา สถานะ ฯลฯ): owner/admin เท่านั้น
+      // - ผู้เช่าที่ล็อกอินจริง: จองแผงว่างเป็นชื่อตัวเองเท่านั้น (available -> booked)
+      //   แก้ได้แค่ status/bookedBy/updatedAt จึงแก้ตำแหน่ง ราคา หรือแย่งแผงที่ถูกจองแล้วไม่ได้
+      match /stalls/{stallId} {
+        allow read: if true;
+        allow create, delete: if isAdmin();
+        allow update: if isAdmin() || isTenantBooking();
+      }
     }
 
-    // ─── Stalls (เตรียมไว้สำหรับโครงสร้างใหม่ในระยะที่ 2) ─────────────────────
-    match /stalls/{stallId} {
-      allow read: if true;
-      allow write: if isAdmin();
+    // ผู้เช่าจองแผง: ต้องเป็นแผงว่างและเปลี่ยนเป็น booked โดยระบุตัวเองเป็นผู้จองเท่านั้น
+    function isTenantBooking() {
+      return isNotAnonymous()
+        && resource.data.status == 'available'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bookedBy', 'updatedAt'])
+        && request.resource.data.status == 'booked'
+        && request.resource.data.bookedBy.keys().hasOnly(['tenantId', 'bookedAt', 'bookingId'])
+        && request.resource.data.bookedBy.tenantId == request.auth.uid;
     }
 
     // ─── Bookings (Customer Transaction History) ─────────────────────────────
+    // มีชื่อ/เบอร์โทร -> อ่านได้เฉพาะเจ้าของรายการและ admin
+    // สร้างได้ต่อเมื่อแผงนั้นถูกจองในชื่อตัวเองในคำสั่งเขียนเดียวกัน (transaction) กันสร้างรายการปลอม
     match /bookings/{bookingId} {
       allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
       allow create: if isNotAnonymous()
         && request.resource.data.tenantId == request.auth.uid
-        && request.resource.data.stallId is string;
+        && request.resource.data.stallId is string
+        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.tenantId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.bookingId == bookingId;
       allow update, delete: if isAdmin();
     }
 

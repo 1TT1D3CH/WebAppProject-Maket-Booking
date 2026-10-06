@@ -279,7 +279,7 @@ async function submitBooking() {
 
   const bookingPayload = {
     ...customer.value,
-    tenantId: authStore.currentUser?.uid || 'tenant-anon',
+    tenantId: authStore.currentUser?.uid,
     slipUrl: slipPreview.value
   }
 
