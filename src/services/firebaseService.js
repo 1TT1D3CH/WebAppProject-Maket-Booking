@@ -2,6 +2,7 @@ import { db, isRealFirebaseConfigured } from '../firebase/config'
 import {
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   runTransaction,
   writeBatch,
@@ -44,11 +45,13 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
     if (!marketReady || stallDocs === null || !onDataReceived) return
     const inSub = stallDocs.length > 0
     onDataReceived({
+      exists: marketData !== null,
       name: marketData?.name,
-      zones: marketData?.zones || [],
-      stalls: inSub ? stallDocs : (marketData?.stalls || []),
+      // null = เอกสารยังไม่มีฟิลด์นี้ (ไม่ใช่ว่าง) ให้ store แยกออกจาก "ว่างจริง"
+      zones: Array.isArray(marketData?.zones) ? marketData.zones : null,
+      stalls: inSub ? stallDocs : (Array.isArray(marketData?.stalls) ? marketData.stalls : []),
       stallsInFirestore: inSub,
-      layoutObjects: marketData?.layoutObjects || [],
+      layoutObjects: Array.isArray(marketData?.layoutObjects) ? marketData.layoutObjects : null,
       marketWidthMeters: marketData?.marketWidthMeters,
       marketHeightMeters: marketData?.marketHeightMeters,
       gridSnapMeters: marketData?.gridSnapMeters,
@@ -83,7 +86,7 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
  *        เฉพาะแผงที่เปลี่ยน ดู buildStallWrites() — ไม่ส่ง stalls ทั้งก้อนอีกต่อไป
  * @returns {{ success: boolean, error?: Error }} ไม่โยน error เพื่อให้ผู้เรียกแจ้งผลตามจริง
  */
-export async function saveMarketLayoutToFirestore(marketName, zones, dimensions = {}, layoutObjects = [], stallWrites = { upserts: [], deletes: [] }) {
+export async function saveMarketLayoutToFirestore(marketName, zones, dimensions = {}, layoutObjects = [], stallWrites = { upserts: [], deletes: [] }, currentStallIds = null) {
   if (!isRealFirebaseConfigured || !db) {
     return { success: false, error: new Error('ยังไม่ได้ตั้งค่า Firebase') }
   }
@@ -100,9 +103,17 @@ export async function saveMarketLayoutToFirestore(marketName, zones, dimensions 
       stalls: deleteField() // เลิกใช้ array stalls ในเอกสารผัง (ย้ายไป subcollection แล้ว)
     }
 
+    // ผังในเครื่อง admin คือต้นฉบับ: ลบแผงใน Firestore ที่ไม่อยู่ในผังแล้ว (แผงค้าง/ขยะ ที่ทำให้หน้าคนทั่วไปเห็นแผงซ้อนทับ)
+    const deleteIds = new Set(stallWrites.deletes)
+    if (Array.isArray(currentStallIds)) {
+      const keep = new Set(currentStallIds)
+      const existing = await getDocs(stallsCol())
+      existing.forEach(d => { if (!keep.has(d.id)) deleteIds.add(d.id) })
+    }
+
     const ops = [
       ...stallWrites.upserts.map(({ id, data }) => ({ type: 'set', ref: doc(stallsCol(), id), data: sanitizeData(data) })),
-      ...stallWrites.deletes.map(id => ({ type: 'delete', ref: doc(stallsCol(), id) }))
+      ...[...deleteIds].map(id => ({ type: 'delete', ref: doc(stallsCol(), id) }))
     ]
 
     // แผงต้องถูกเขียนก่อน แล้วค่อยลบฟิลด์ stalls เดิม กันข้อมูลหายถ้าบันทึกกลางทางล้ม

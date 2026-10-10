@@ -11,6 +11,16 @@ import { useAuthStore } from './authStore.js'
 import { formatThaiTime } from '../utils/date.js'
 import { buildStallWrites, mergeRemoteStalls } from '../utils/stallSync.js'
 
+function readCache(key, fallback) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(key))
+    if (cached) return cached
+  } catch {
+    // cache เสียหรือไม่มี localStorage
+  }
+  return isRealFirebaseConfigured ? [] : fallback
+}
+
 export const useMarketStore = defineStore('market', {
   state: () => ({
     activeMode: 'customer', // 'admin' | 'members' | 'customer'
@@ -27,9 +37,11 @@ export const useMarketStore = defineStore('market', {
     zoomLevel: 1,
     panOffset: { x: 0, y: 0 },
     
-    zones: JSON.parse(localStorage.getItem('market_zones')) || DEFAULT_ZONES,
-    stalls: JSON.parse(localStorage.getItem('market_stalls')) || DEFAULT_STALLS,
-    layoutObjects: JSON.parse(localStorage.getItem('market_layout_objects')) || DEFAULT_LAYOUT_OBJECTS,
+    // localStorage เป็นแค่ cache; เมื่อใช้ Firestore จริงและเครื่องนี้ยังไม่มี cache ให้เริ่มว่าง
+    // (ไม่โชว์ค่า default ชั่วคราว) แล้วรอข้อมูลจาก Firestore เป็นตัวตัดสิน
+    zones: readCache('market_zones', DEFAULT_ZONES),
+    stalls: readCache('market_stalls', DEFAULT_STALLS),
+    layoutObjects: readCache('market_layout_objects', DEFAULT_LAYOUT_OBJECTS),
     
     selectedStallId: null,
     selectedObjectId: null, // Selected non-stall Architecture Object ID
@@ -173,7 +185,20 @@ export const useMarketStore = defineStore('market', {
             this.stallsInFirestore = data.stallsInFirestore
             const hadUnsaved = this.hasUnsavedChanges
 
-            if (data.stalls && data.stalls.length > 0) {
+            // ยังไม่มีเอกสารผังใน Firestore เลย: ใช้ค่า default เป็นผังตั้งต้น (admin เป็นคนบันทึกสร้างเอกสารครั้งแรก)
+            if (!data.exists) {
+              if (!hadUnsaved && this.stalls.length === 0 && this.layoutObjects.length === 0 && this.zones.length === 0) {
+                this.stalls = JSON.parse(JSON.stringify(DEFAULT_STALLS))
+                this.zones = JSON.parse(JSON.stringify(DEFAULT_ZONES))
+                this.layoutObjects = JSON.parse(JSON.stringify(DEFAULT_LAYOUT_OBJECTS))
+                this._captureInitialStallsState()
+              }
+              this.isRealtimeConnected = true
+              return
+            }
+
+            // มีเอกสารผังแล้ว: Firestore ชนะเสมอ แม้ผังจะว่าง (admin ลบทุกอย่างแล้วบันทึก) ห้ามเอา default มาเติม
+            if (Array.isArray(data.stalls)) {
               // มีงานที่ admin ยังไม่ได้บันทึก: รวมเฉพาะการจองใหม่ ไม่ทับงานที่แก้ไว้ (C5)
               const merged = mergeRemoteStalls(this.stalls, data.stalls, this.initialStallsState, hadUnsaved)
               this.stalls = merged.stalls
@@ -181,8 +206,8 @@ export const useMarketStore = defineStore('market', {
             }
 
             if (!hadUnsaved) {
-              if (data.zones && data.zones.length > 0) this.zones = data.zones
-              if (data.layoutObjects && data.layoutObjects.length > 0) this.layoutObjects = data.layoutObjects
+              if (Array.isArray(data.zones)) this.zones = data.zones
+              if (Array.isArray(data.layoutObjects)) this.layoutObjects = data.layoutObjects
               if (data.name) this.marketName = data.name
               if (data.marketWidthMeters) this.marketWidthMeters = data.marketWidthMeters
               if (data.marketHeightMeters) this.marketHeightMeters = data.marketHeightMeters
@@ -605,7 +630,8 @@ export const useMarketStore = defineStore('market', {
             gridSnapMeters: this.gridSnapMeters
           },
           this.layoutObjects,
-          stallWrites
+          stallWrites,
+          this.stalls.map(s => s.id)
         )
 
         if (!res.success) {
