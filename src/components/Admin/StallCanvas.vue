@@ -1,6 +1,6 @@
 <template>
   <div
-    class="relative w-full h-[calc(100vh-112px)] overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col select-none transition-colors duration-300"
+    class="relative w-full h-app-view overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col select-none transition-colors duration-300"
     :style="isMobile ? { paddingBottom: MOBILE_TOOLBAR_SPACE } : null"
   >
     

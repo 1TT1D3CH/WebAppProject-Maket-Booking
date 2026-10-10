@@ -27,6 +27,20 @@
     -webkit-backdrop-filter: blur(12px);
   }
 
+  /* ความสูงพื้นที่ใช้งานใต้ header: dvh ไม่ล้นเมื่อแถบ Safari บน iOS แสดงอยู่ (fallback เป็น vh) */
+  .h-app-view {
+    height: calc(100vh - 112px);
+    height: calc(100dvh - 112px);
+  }
+
+  /* เว้นพื้นที่รอยบาก/home bar ของ iPhone */
+  .safe-pt { padding-top: env(safe-area-inset-top); }
+  .safe-pb { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-px {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
   /* Micro-animation transitions */
   .transition-micro {
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -92,5 +106,33 @@ body {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+/* ไม่ให้ทั้งหน้าเลื่อนแนวนอน */
+html, body {
+  overflow-x: hidden;
+}
+
+/* จอสัมผัส: เป้าแตะอย่างน้อย 44x44px (ใส่ class no-tap ถ้าเป็นปุ่มที่ตั้งใจให้เล็ก) */
+@media (pointer: coarse) {
+  button:not(.no-tap),
+  [role="button"]:not(.no-tap),
+  select:not(.no-tap) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* จอเล็ก/จอสัมผัส: ช่องกรอกต้อง >= 16px ไม่งั้น iOS จะซูมหน้าเองตอนแตะ */
+@media (pointer: coarse), (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 }

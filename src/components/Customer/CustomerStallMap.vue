@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-[calc(100vh-112px)] bg-slate-50 dark:bg-slate-950 select-none transition-colors duration-300">
+  <div class="flex flex-col h-app-view bg-slate-50 dark:bg-slate-950 select-none transition-colors duration-300">
     
     <!-- Filter & Search Bar Header (Glassmorphism Clean Style) -->
     <div class="glass-panel dark:glass-panel-dark border-b border-slate-200/80 dark:border-slate-800/80 p-3 sm:p-4 sticky top-0 z-20 shadow-xs transition-colors duration-300">

@@ -1,5 +1,5 @@
 <template>
-  <header class="glass-panel dark:glass-panel-dark sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800/80 shadow-xs transition-colors duration-300">
+  <header class="glass-panel dark:glass-panel-dark sticky top-0 z-30 safe-px safe-pt border-b border-slate-200/80 dark:border-slate-800/80 shadow-xs transition-colors duration-300">
     
     <!-- Global Header Row 1 -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

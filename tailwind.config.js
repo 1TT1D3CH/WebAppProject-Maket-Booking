@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
+  // hover: ใช้เฉพาะอุปกรณ์ที่ชี้ด้วยเมาส์ได้ กันสถานะ hover ค้างหลังแตะบน iOS
+  future: { hoverOnlyWhenSupported: true },
   content: [
     "./index.html",
     "./src/**/*.{vue,js,ts,jsx,tsx}",
