@@ -1,23 +1,6 @@
 <template>
-  <div 
-    v-if="isOpen"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-  >
-    <div class="bg-white border border-slate-200/80 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col text-slate-800">
-      
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
-        <div class="flex items-center gap-2">
-          <Maximize2 class="w-5 h-5 text-indigo-600" />
-          <h2 class="text-base font-bold text-slate-900">ตั้งค่าขนาดและพื้นที่ตลาดรวม (เมตร / ตร.ม.)</h2>
-        </div>
-        <button @click="$emit('close')" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
-
-      <!-- Form Content -->
-      <form @submit.prevent="saveDimensions" class="p-6 space-y-5 text-xs sm:text-sm">
+  <BaseModal :open="isOpen" title="ตั้งค่าขนาดและพื้นที่ตลาดรวม (เมตร / ตร.ม.)" tone="light" size="md" mobile-mode="fullscreen" @close="$emit('close')">
+      <form id="market-settings-form" @submit.prevent="saveDimensions" class="space-y-5 text-xs sm:text-sm">
         
         <!-- Market Name -->
         <div>
@@ -100,31 +83,28 @@
           </select>
         </div>
 
-        <!-- Buttons -->
-        <div class="pt-2 flex items-center justify-end gap-3">
-          <button 
+      </form>
+    <template #footer>
+      <button 
             type="button"
             @click="$emit('close')"
             class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
           >
             ยกเลิก
           </button>
-          <button 
-            type="submit"
+      <button 
+            type="submit" form="market-settings-form"
             class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition flex items-center gap-1.5 active:scale-95"
           >
             <Check class="w-4 h-4" />
             <span>ปรับขนาดตลาด</span>
           </button>
-        </div>
-
-      </form>
-
-    </div>
-  </div>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup>
+import BaseModal from '../ui/BaseModal.vue'
 import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Maximize2, X, Check } from 'lucide-vue-next'

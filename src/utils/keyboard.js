@@ -7,7 +7,7 @@ export function isTypingTarget(el) {
 
 // ถ้ามี modal (overlay fixed inset-0 z-50) หรือแผงแก้ไขด้านข้างเปิดอยู่ ไม่ให้คีย์ลัดทำงานกับผัง
 export function isModalOpen() {
-  return !!document.querySelector('.fixed.inset-0.z-50, [data-editor-panel]')
+  return !!document.querySelector('.fixed.inset-0.z-50, [role="dialog"][aria-modal="true"], [data-editor-panel]')
 }
 
 // คีย์ที่กดขณะ focus อยู่ในช่องพิมพ์, modal หรือเมนูของ toolbar ไม่ใช่คีย์ลัดของผัง

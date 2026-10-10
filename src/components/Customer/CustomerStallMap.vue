@@ -205,7 +205,7 @@
     <!-- Mobile & Desktop Sliding Bottom Sheet / Floating Footer -->
     <div 
       v-if="selectedStall"
-      class="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 p-4 sm:p-5 fixed bottom-0 inset-x-0 z-40 shadow-2xl animate-slide-up rounded-t-3xl sm:rounded-none text-slate-800 dark:text-slate-100"
+      class="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 p-4 sm:p-5 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[50dvh] overflow-y-auto fixed bottom-0 inset-x-0 z-40 shadow-2xl animate-slide-up rounded-t-3xl sm:rounded-none text-slate-800 dark:text-slate-100"
     >
       <div class="max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         

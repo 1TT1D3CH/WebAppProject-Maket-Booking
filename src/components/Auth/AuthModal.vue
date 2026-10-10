@@ -1,34 +1,12 @@
 <template>
-  <Transition name="fade">
-    <div 
-      v-if="isOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md"
-    >
-      <div 
-        class="bg-white border border-slate-200/80 w-full max-w-md rounded-3xl shadow-2xl p-6 relative overflow-hidden text-slate-800"
-        @click.stop
-      >
-        <!-- Modal Header -->
-        <div class="flex items-center justify-between pb-4 border-b border-slate-200/80">
-          <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold border border-indigo-100">
-              <UserCheck class="w-4 h-4" />
-            </div>
-            <div>
-              <h3 class="text-sm font-bold text-slate-900">
-                {{ authStore.isAuthenticated ? 'บัญชีผู้ใช้งาน' : isResetMode ? 'ลืมรหัสผ่าน' : isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)' }}
-              </h3>
-              <p class="text-[11px] text-slate-500 font-medium">ระบบจองแผงตลาด WalkStreet System</p>
-            </div>
-          </div>
-          <button 
-            @click="$emit('close')"
-            class="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-          >
-            <X class="w-5 h-5" />
-          </button>
-        </div>
-
+  <BaseModal
+    :open="isOpen"
+    :title="authStore.isAuthenticated ? 'บัญชีผู้ใช้งาน' : isResetMode ? 'ลืมรหัสผ่าน' : isRegister ? 'สมัครสมาชิกผู้ใช้งานใหม่' : 'เข้าสู่ระบบ (Sign In)'"
+    tone="light"
+    size="sm"
+    mobile-mode="sheet"
+    @close="$emit('close')"
+  >
         <!-- Quick Demo Switcher Section (โหลดเฉพาะ dev / VITE_DEMO_MODE=true) -->
         <DemoRoleSwitcher v-if="DemoRoleSwitcher" @switched="emit('close')" />
 
@@ -226,17 +204,15 @@
             {{ isRegister ? 'มีบัญชีผู้ใช้อยู่แล้ว? คลิกเข้าสู่ระบบ' : 'ยังไม่มีบัญชีผู้ใช้? คลิกสมัครสมาชิก' }}
           </button>
         </div>
-
-      </div>
-    </div>
-  </Transition>
+  </BaseModal>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import { useAuthStore, DEMO_ENABLED } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
-import { UserCheck, X, AlertCircle, LogOut, MailCheck } from 'lucide-vue-next'
+import BaseModal from '../ui/BaseModal.vue'
+import { AlertCircle, LogOut, MailCheck } from 'lucide-vue-next'
 
 const props = defineProps({
   isOpen: Boolean

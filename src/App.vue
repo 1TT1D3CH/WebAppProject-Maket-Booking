@@ -94,7 +94,7 @@
     <Transition name="fade">
       <div 
         v-if="marketStore.notification"
-        class="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-xl border backdrop-blur-md flex items-center gap-2.5 text-xs font-semibold tracking-tight transition-colors duration-300"
+        class="fixed bottom-6 right-6 z-[70] px-4 py-3 rounded-2xl shadow-xl border backdrop-blur-md flex items-center gap-2.5 text-xs font-semibold tracking-tight transition-colors duration-300"
         :class="{
           'bg-emerald-50/95 dark:bg-emerald-950/90 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700 shadow-emerald-500/10': marketStore.notification.type === 'success',
           'bg-rose-50/95 dark:bg-rose-950/90 text-rose-900 dark:text-rose-200 border-rose-300 dark:border-rose-700 shadow-rose-500/10': marketStore.notification.type === 'error',

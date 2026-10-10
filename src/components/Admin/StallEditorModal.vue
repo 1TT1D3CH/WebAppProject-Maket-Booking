@@ -2,7 +2,7 @@
   <div 
     v-if="isOpen && stall"
     data-editor-panel
-    class="fixed inset-y-0 right-0 z-40 w-full max-w-md bg-white border-l border-slate-200/90 shadow-2xl flex flex-col transition-transform text-slate-800"
+    class="fixed inset-y-0 right-0 z-40 w-full max-w-md h-dvh bg-white border-l border-slate-200/90 shadow-2xl flex flex-col transition-transform text-slate-800"
   >
     <!-- Header -->
     <div class="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
@@ -168,7 +168,7 @@
     </div>
 
     <!-- Footer Actions -->
-    <div class="p-4 border-t border-slate-200/80 bg-slate-50/80 flex items-center justify-between gap-3">
+    <div class="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-slate-200/80 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3 [&_button]:whitespace-nowrap">
       <button 
         @click="deleteStall"
         class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-semibold text-xs transition flex items-center gap-1"
@@ -177,7 +177,7 @@
         <span>ลบแผงค้า</span>
       </button>
 
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <button 
           @click="$emit('close')"
           class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition"

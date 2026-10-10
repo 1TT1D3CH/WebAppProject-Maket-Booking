@@ -2,7 +2,7 @@
   <div 
     v-if="isOpen && object"
     data-editor-panel
-    class="fixed inset-y-0 right-0 z-40 w-full max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col transition-transform text-slate-800 dark:text-slate-100"
+    class="fixed inset-y-0 right-0 z-40 w-full max-w-md h-dvh bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col transition-transform text-slate-800 dark:text-slate-100"
   >
     <!-- Header -->
     <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900/90">
@@ -126,7 +126,7 @@
     </div>
 
     <!-- Footer Actions -->
-    <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex items-center justify-between gap-3">
+    <div class="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex flex-wrap items-center justify-between gap-3 [&_button]:whitespace-nowrap">
       <button 
         @click="deleteObject"
         class="px-3 py-2 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800 rounded-xl font-semibold text-xs transition flex items-center gap-1"
@@ -135,7 +135,7 @@
         <span>ลบวัตถุนี้</span>
       </button>
 
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <button 
           @click="$emit('close')"
           class="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-semibold text-xs transition"

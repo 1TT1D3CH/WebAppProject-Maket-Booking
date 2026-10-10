@@ -1,23 +1,6 @@
 <template>
-  <div 
-    v-if="isOpen"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-  >
-    <div class="bg-white border border-slate-200/80 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-slate-800">
-      
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
-        <div class="flex items-center gap-2">
-          <Palette class="w-5 h-5 text-purple-600" />
-          <h2 class="text-base font-bold text-slate-900">จัดการโซนสินค้าและราคาเริ่มต้น</h2>
-        </div>
-        <button @click="$emit('close')" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
-
-      <!-- Content -->
-      <div class="p-6 space-y-6 overflow-y-auto flex-1">
+  <BaseModal :open="isOpen" title="จัดการโซนสินค้าและราคาเริ่มต้น" tone="light" size="md" mobile-mode="fullscreen" @close="$emit('close')">
+      <div class="space-y-6">
         
         <!-- Add New Zone Form -->
         <div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
@@ -112,22 +95,19 @@
         </div>
 
       </div>
-
-      <!-- Footer -->
-      <div class="px-6 py-4 border-t border-slate-200/80 bg-slate-50/80 flex justify-end">
-        <button 
+    <template #footer>
+      <button 
           @click="$emit('close')"
-          class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
+          class="px-5 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
         >
           ปิดหน้าต่าง
         </button>
-      </div>
-
-    </div>
-  </div>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup>
+import BaseModal from '../ui/BaseModal.vue'
 import { ref } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Palette, X, Plus, Trash2 } from 'lucide-vue-next'

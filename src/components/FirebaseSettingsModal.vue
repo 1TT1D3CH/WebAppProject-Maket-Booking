@@ -1,23 +1,6 @@
 <template>
-  <div 
-    v-if="isOpen"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-  >
-    <div class="bg-white border border-slate-200/80 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col text-slate-800">
-      
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
-        <div class="flex items-center gap-2">
-          <Flame class="w-5 h-5 text-amber-500" />
-          <h2 class="text-base font-bold text-slate-900">ตั้งค่าการเชื่อมต่อ Firebase Firestore</h2>
-        </div>
-        <button @click="$emit('close')" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
-
-      <!-- Form Body -->
-      <div class="p-6 space-y-4 text-xs sm:text-sm">
+  <BaseModal :open="isOpen" title="ตั้งค่าการเชื่อมต่อ Firebase Firestore" tone="light" size="sm" mobile-mode="sheet" @close="$emit('close')">
+      <div class="space-y-4 text-xs sm:text-sm">
         <p class="text-slate-600 leading-relaxed font-medium">
           ปัจจุบันระบบทำงานในโหมด <strong class="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Local PoC Mode</strong> โดยจะบันทึกข้อมูลผังตลาดและสถานะการจองลงใน Browser LocalStorage 
         </p>
@@ -38,22 +21,20 @@
           <p>VITE_FIREBASE_MESSAGING_SENDER_ID=123456789</p>
           <p>VITE_FIREBASE_APP_ID=1:123456789:web:abcdef</p>
         </div>
-
-        <div class="pt-2 flex justify-end">
-          <button 
+      </div>
+    <template #footer>
+      <button 
             @click="$emit('close')"
             class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition active:scale-95"
           >
             เข้าใจแล้ว
           </button>
-        </div>
-      </div>
-
-    </div>
-  </div>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup>
+import BaseModal from './ui/BaseModal.vue'
 import { Flame, X } from 'lucide-vue-next'
 defineProps({ isOpen: Boolean })
 defineEmits(['close'])

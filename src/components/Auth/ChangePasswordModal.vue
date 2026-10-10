@@ -1,17 +1,14 @@
 <template>
-  <div
-    v-if="isOpen"
-    class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md"
-    role="dialog"
-    aria-modal="true"
-    @keydown.esc="!forced && $emit('close')"
+  <BaseModal
+    :open="isOpen"
+    :title="forced ? 'ตั้งรหัสผ่านใหม่ก่อนใช้งาน' : 'เปลี่ยนรหัสผ่าน'"
+    :dismissible="!forced"
+    size="sm"
+    mobile-mode="sheet"
+    @close="$emit('close')"
   >
-    <form
-      @submit.prevent="submit"
-      class="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 w-full max-w-sm rounded-3xl shadow-2xl p-6 space-y-3"
-    >
+    <form id="change-password-form" @submit.prevent="submit" class="space-y-3">
       <div>
-        <h3 class="text-sm font-bold">{{ forced ? 'ตั้งรหัสผ่านใหม่ก่อนใช้งาน' : 'เปลี่ยนรหัสผ่าน' }}</h3>
         <p v-if="forced" class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
           บัญชีนี้ใช้รหัสผ่านเริ่มต้น กรุณาตั้งรหัสใหม่อย่างน้อย 10 ตัวอักษร
         </p>
@@ -23,18 +20,19 @@
 
       <p v-if="error" class="text-xs text-rose-600 font-medium">{{ error }}</p>
 
-      <div class="flex gap-2 pt-1">
-        <button v-if="!forced" type="button" @click="$emit('close')" class="flex-1 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700">ยกเลิก</button>
-        <button type="submit" :disabled="busy" class="flex-1 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
-          {{ busy ? 'กำลังบันทึก...' : 'บันทึกรหัสผ่านใหม่' }}
-        </button>
-      </div>
       <button v-if="forced" type="button" @click="authStore.logout()" class="w-full text-[11px] text-slate-500 hover:text-rose-600 underline">ออกจากระบบ</button>
     </form>
-  </div>
+    <template #footer>
+      <button v-if="!forced" type="button" @click="$emit('close')" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700">ยกเลิก</button>
+      <button type="submit" form="change-password-form" :disabled="busy" class="px-6 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+          {{ busy ? 'กำลังบันทึก...' : 'บันทึกรหัสผ่านใหม่' }}
+        </button>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup>
+import BaseModal from '../ui/BaseModal.vue'
 import { ref } from 'vue'
 import { useAuthStore } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'

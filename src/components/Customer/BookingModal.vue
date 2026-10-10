@@ -1,23 +1,14 @@
 <template>
-  <div 
-    v-if="isOpen && stall"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+  <BaseModal
+    :open="isOpen && !!stall"
+    :title="`จองแผงค้า ${stall?.stallNo ?? ''}`"
+    tone="light"
+    size="md"
+    mobile-mode="fullscreen"
+    @close="$emit('close')"
   >
-    <div class="bg-white border border-slate-200/80 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-slate-800">
-      
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
-        <div class="flex items-center gap-2">
-          <ShoppingBag class="w-5 h-5 text-indigo-600" />
-          <h2 class="text-base font-bold text-slate-900">แบบฟอร์มยืนยันการจองแผงค้า {{ stall.stallNo }}</h2>
-        </div>
-        <button @click="$emit('close')" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
-
       <!-- Auth Check Banner (NO GUEST BOOKING ENFORCEMENT) -->
-      <div v-if="!authStore.isAuthenticated" class="p-6 text-center space-y-4">
+      <div v-if="!authStore.isAuthenticated" class="py-4 text-center space-y-4">
         <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
           <Lock class="w-6 h-6" />
         </div>
@@ -34,7 +25,7 @@
       </div>
 
       <!-- Form Body -->
-      <form v-else @submit.prevent="submitBooking" class="p-6 overflow-y-auto space-y-4 text-xs sm:text-sm">
+      <form v-else id="booking-form" @submit.prevent="submitBooking" class="space-y-4 text-xs sm:text-sm">
         
         <!-- Stall Summary Card -->
         <div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between">
@@ -166,34 +157,34 @@
           </p>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="pt-2 flex items-center justify-end gap-3">
-          <button 
-            type="button"
-            @click="$emit('close')"
-            class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
-          >
-            ยกเลิก
-          </button>
-          <button 
-            type="submit"
-            class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-xs transition flex items-center gap-1.5 active:scale-95"
-          >
-            <CheckCircle class="w-4 h-4" />
-            <span>ยืนยันชำระเงินและจองแผง</span>
-          </button>
-        </div>
-
       </form>
-    </div>
-  </div>
+
+    <template v-if="authStore.isAuthenticated" #footer>
+      <button
+        type="button"
+        @click="$emit('close')"
+        class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition"
+      >
+        ยกเลิก
+      </button>
+      <button
+        type="submit"
+        form="booking-form"
+        class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-sm transition inline-flex items-center gap-1.5 active:scale-95"
+      >
+        <CheckCircle class="w-4 h-4" />
+        <span>ยืนยันชำระเงินและจองแผง</span>
+      </button>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { useAuthStore } from '../../stores/authStore'
-import { ShoppingBag, X, ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
+import BaseModal from '../ui/BaseModal.vue'
+import { ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
 
 const props = defineProps({
   isOpen: Boolean,
