@@ -136,3 +136,15 @@ html, body {
     font-size: 16px !important;
   }
 }
+
+/* จอสัมผัส: จุดจับปรับขนาดใหญ่พอให้นิ้วจับได้ และไม่ให้เบราว์เซอร์แย่ง gesture */
+@media (pointer: coarse) {
+  .resize-handle {
+    width: 2.25rem !important;
+    height: 2.25rem !important;
+    right: -0.9rem !important;
+    bottom: -0.9rem !important;
+    opacity: 1 !important;
+    touch-action: none;
+  }
+}

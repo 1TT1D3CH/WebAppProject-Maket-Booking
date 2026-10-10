@@ -126,7 +126,7 @@
 
           <!-- RESIZE HANDLE -->
           <div 
-            class="absolute -bottom-2 -right-2 w-5 h-5 bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 rounded-full cursor-se-resize flex items-center justify-center shadow-md border-2 border-white dark:border-slate-900 transition-all duration-150 z-30"
+            class="absolute -bottom-2 -right-2 w-5 h-5 bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 resize-handle rounded-full cursor-se-resize flex items-center justify-center shadow-md border-2 border-white dark:border-slate-900 transition-all duration-150 z-30"
             :class="marketStore.selectedObjectId === obj.id ? 'opacity-100 scale-110' : 'opacity-0 group-hover:opacity-100'"
             title="ปรับขนาด"
             @mousedown.stop="startResizeObject($event, obj)"
@@ -197,7 +197,7 @@
 
           <!-- RESIZE HANDLE -->
           <div 
-            class="absolute -bottom-2 -right-2 w-6 h-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full cursor-se-resize flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-950 transition-all duration-150 z-30"
+            class="absolute -bottom-2 -right-2 w-6 h-6 bg-indigo-600 hover:bg-indigo-700 text-white resize-handle rounded-full cursor-se-resize flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-950 transition-all duration-150 z-30"
             :class="marketStore.selectedStallId === stall.id ? 'opacity-100 scale-110' : 'opacity-0 group-hover:opacity-100'"
             title="ลากเพื่อปรับขนาด (Resize)"
             @mousedown.stop="startResizeStall($event, stall)"
@@ -214,7 +214,7 @@
     <div 
       v-if="marketStore.selectedStall"
       :style="inspectorStyle"
-      class="absolute bottom-2 inset-x-2 sm:bottom-4 lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 max-h-[50dvh] overflow-y-auto z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-3 sm:px-5 py-2.5 rounded-2xl shadow-xl flex flex-wrap items-center gap-x-4 gap-y-2 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
+      class="absolute bottom-2 inset-x-2 sm:bottom-4 lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 max-h-[50dvh] overflow-y-auto z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-3 sm:px-5 py-2.5 rounded-2xl shadow-xl flex flex-col lg:flex-row lg:items-center gap-x-4 gap-y-2.5 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
     >
       <div class="flex items-center gap-2">
         <span 
@@ -225,18 +225,18 @@
         <span class="text-slate-500 dark:text-slate-400 font-medium">({{ marketStore.getZoneById(marketStore.selectedStall.zoneId)?.name }})</span>
       </div>
 
-      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800"></div>
+      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0"></div>
 
       <!-- Stall Real-World Metric Info -->
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-slate-700 dark:text-slate-300 font-semibold">
+      <div class="grid grid-cols-3 lg:flex lg:items-center gap-x-3 gap-y-1 font-mono text-slate-700 dark:text-slate-300 font-semibold [&>span]:whitespace-nowrap">
         <span>กว้าง: <strong class="text-indigo-600 dark:text-indigo-400">{{ selectedMetrics.widthM }} ม.</strong></span>
         <span>ยาว: <strong class="text-indigo-600 dark:text-indigo-400">{{ selectedMetrics.heightM }} ม.</strong></span>
         <span>พื้นที่: <strong class="text-emerald-600 dark:text-emerald-400">{{ selectedMetrics.areaSqM }} ตร.ม.</strong></span>
       </div>
 
-      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800"></div>
+      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0"></div>
 
-      <div class="flex flex-wrap items-center gap-2 [&>button]:whitespace-nowrap">
+      <div class="flex items-stretch gap-2 [&>button]:whitespace-nowrap [&>button]:min-h-[44px] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button:first-child]:flex-1 lg:[&>button]:min-h-0 lg:[&>button:first-child]:flex-none">
         <button 
           @click="$emit('open-editor')"
           class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all duration-150 shadow-sm shadow-indigo-200 dark:shadow-none active:scale-95"
@@ -257,23 +257,23 @@
     <div 
       v-if="marketStore.selectedObject"
       :style="inspectorStyle"
-      class="absolute bottom-2 inset-x-2 sm:bottom-4 lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 max-h-[50dvh] overflow-y-auto z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-3 sm:px-5 py-2.5 rounded-2xl shadow-xl flex flex-wrap items-center gap-x-4 gap-y-2 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
+      class="absolute bottom-2 inset-x-2 sm:bottom-4 lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 max-h-[50dvh] overflow-y-auto z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-3 sm:px-5 py-2.5 rounded-2xl shadow-xl flex flex-col lg:flex-row lg:items-center gap-x-4 gap-y-2.5 text-xs animate-slide-up text-slate-800 dark:text-slate-200"
     >
       <div class="flex items-center gap-2">
         <component :is="getIconComponent(marketStore.selectedObject.styleProps?.icon)" class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
         <span class="font-bold text-slate-900 dark:text-white text-sm">{{ marketStore.selectedObject.label }}</span>
       </div>
 
-      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800"></div>
+      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0"></div>
 
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-slate-700 dark:text-slate-300 font-semibold">
+      <div class="grid grid-cols-2 lg:flex lg:items-center gap-x-3 gap-y-1 font-mono text-slate-700 dark:text-slate-300 font-semibold [&>span]:whitespace-nowrap">
         <span>ขนาด: <strong>{{ selectedObjectMetrics.widthM }} × {{ selectedObjectMetrics.heightM }} ม.</strong></span>
         <span>หมุน: <strong class="text-indigo-600 dark:text-indigo-400">{{ marketStore.selectedObject.rotation || 0 }}°</strong></span>
       </div>
 
-      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800"></div>
+      <div class="hidden lg:block h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0"></div>
 
-      <div class="flex flex-wrap items-center gap-2 [&>button]:whitespace-nowrap">
+      <div class="flex items-stretch gap-2 [&>button]:whitespace-nowrap [&>button]:min-h-[44px] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button:first-child]:flex-1 lg:[&>button]:min-h-0 lg:[&>button:first-child]:flex-none">
         <button 
           @click="marketStore.rotateLayoutObject(marketStore.selectedObject.id)"
           class="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl transition-all duration-150"
@@ -303,7 +303,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Trash2, RotateCw } from 'lucide-vue-next'
 import CanvasToolbar from '../canvas/CanvasToolbar.vue'
@@ -658,6 +658,33 @@ function handleKeyDown(e) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', handleKeyDown))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleKeyDown))
+// จอเล็ก/iPad: เปิดมาให้ผังพอดีจอ และ fit ใหม่ตอนหมุนจอ ถ้าผู้ใช้ยังไม่ได้ซูม/เลื่อนเอง
+let lastFit = null
+function autoFit() {
+  if (window.innerWidth >= 1024) return
+  const untouched = !lastFit ||
+    (marketStore.zoomLevel === lastFit.zoom &&
+      marketStore.panOffset.x === lastFit.x && marketStore.panOffset.y === lastFit.y)
+  if (!untouched) return
+  fitToScreen()
+  lastFit = { zoom: marketStore.zoomLevel, x: marketStore.panOffset.x, y: marketStore.panOffset.y }
+}
+let fitTimer = null
+function onResizeFit() {
+  clearTimeout(fitTimer)
+  fitTimer = setTimeout(autoFit, 150)
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('resize', onResizeFit)
+  window.addEventListener('orientationchange', onResizeFit)
+  nextTick(autoFit)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('resize', onResizeFit)
+  window.removeEventListener('orientationchange', onResizeFit)
+  clearTimeout(fitTimer)
+})
 </script>
