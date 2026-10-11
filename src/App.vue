@@ -125,7 +125,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useMarketStore } from './stores/marketStore'
 import { useNotificationStore } from './stores/notificationStore'
 import { useAuthStore } from './stores/authStore'
@@ -170,7 +170,17 @@ const slipReviewStore = useSlipReviewStore()
 const myBookingsStore = useMyBookingsStore()
 const mustChangePassword = computed(() => authStore.currentUser?.mustChangePassword === true)
 
+// เตือนก่อนปิดแท็บ/รีเฟรชถ้า admin ยังมีผังที่แก้แล้วไม่ได้บันทึก
+function warnUnsavedLayout(e) {
+  if (!marketStore.hasUnsavedChanges) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnUnsavedLayout))
+
 onMounted(() => {
+  window.addEventListener('beforeunload', warnUnsavedLayout)
   authStore.initAuth()
   marketStore.initFirebaseSync()
 

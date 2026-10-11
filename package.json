@@ -12,7 +12,7 @@
     "deploy": "npm run build && firebase deploy --only hosting,firestore:rules,firestore:indexes",
     "deploy:hosting": "npm run build && firebase deploy --only hosting",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
-    "test:unit": "node --test tests/date.test.mjs tests/stallSync.test.mjs tests/loginId.test.mjs tests/compressImage.test.mjs tests/keepAlive.test.mjs",
+    "test:unit": "node --test tests/date.test.mjs tests/stallSync.test.mjs tests/loginId.test.mjs tests/compressImage.test.mjs tests/keepAlive.test.mjs tests/stallLabel.test.mjs tests/publishedLayout.test.mjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-market-rules \"node --test tests/firestore.rules.test.mjs\""
   },
   "dependencies": {

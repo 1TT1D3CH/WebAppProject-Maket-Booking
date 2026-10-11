@@ -117,8 +117,8 @@ const info = (b) => INFO[b.status || 'confirmed'] || INFO.confirmed
 const canCancel = (b) => b.status === 'pending' || b.status === 'needs_slip'
 const timeOf = (b) => (b.createdAt?.toDate ? formatThaiDateTime(b.createdAt.toDate()) : '-')
 const zoneOf = (b) => {
-  const stall = marketStore.stalls.find(s => s.id === b.stallId)
-  return (stall && marketStore.getZoneById(stall.zoneId)?.name) || '-'
+  const stall = marketStore.pub.stalls.find(s => s.id === b.stallId)
+  return (stall && marketStore.pubZoneById(stall.zoneId)?.name) || '-'
 }
 
 function errText(err) {

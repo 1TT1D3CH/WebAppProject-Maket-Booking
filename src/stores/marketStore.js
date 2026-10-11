@@ -10,6 +10,7 @@ import { useNotificationStore } from './notificationStore.js'
 import { useAuthStore } from './authStore.js'
 import { formatThaiTime } from '../utils/date.js'
 import { buildStallWrites, mergeRemoteStalls } from '../utils/stallSync.js'
+import { snapshotLayout, draftFromPublished, patchPublishedStall } from '../utils/publishedLayout.js'
 
 function readCache(key, fallback) {
   try {
@@ -42,6 +43,10 @@ export const useMarketStore = defineStore('market', {
     zones: readCache('market_zones', DEFAULT_ZONES),
     stalls: readCache('market_stalls', DEFAULT_STALLS),
     layoutObjects: readCache('market_layout_objects', DEFAULT_LAYOUT_OBJECTS),
+
+    // ผังที่เผยแพร่แล้ว = สิ่งที่ลูกค้าเห็น (stalls/zones/layoutObjects/ขนาดตลาด ด้านบนคือ draft ของ admin)
+    // อัปเดตจาก Firestore หรือหลัง admin บันทึกสำเร็จเท่านั้น ห้ามอ่าน draft ในหน้าลูกค้า
+    published: null,
     
     selectedStallId: null,
     selectedObjectId: null, // Selected non-stall Architecture Object ID
@@ -81,6 +86,27 @@ export const useMarketStore = defineStore('market', {
     selectedObject: (state) => state.layoutObjects.find(o => o.id === state.selectedObjectId),
 
     getZoneById: (state) => (id) => state.zones.find(z => z.id === id) || { name: 'ไม่ระบุ', color: '#94a3b8' },
+
+    // ─── มุมมองลูกค้า: อ่านจากผังที่เผยแพร่แล้วเท่านั้น ───────────────────────
+    pub: (state) => state.published || state,
+    pubZoneById() {
+      const zones = this.pub.zones
+      return (id) => zones.find(z => z.id === id) || { name: 'ไม่ระบุ', color: '#94a3b8' }
+    },
+    pubCanvasWidthPx() { return Math.round(this.pub.marketWidthMeters * this.scalePxPerMeter) },
+    pubCanvasHeightPx() { return Math.round(this.pub.marketHeightMeters * this.scalePxPerMeter) },
+    pubTotalAreaSqM() { return this.pub.marketWidthMeters * this.pub.marketHeightMeters },
+    pubFilteredStalls() {
+      return this.pub.stalls.filter(stall => {
+        const q = this.searchQuery.toLowerCase()
+        const matchesZone = this.filterZoneId === 'all' || stall.zoneId === this.filterZoneId
+        const matchesStatus = this.filterStatus === 'all' || stall.status === this.filterStatus
+        const matchesSearch = !q ||
+          stall.stallNo.toLowerCase().includes(q) ||
+          (stall.notes && stall.notes.toLowerCase().includes(q))
+        return matchesZone && matchesStatus && matchesSearch
+      })
+    },
 
     canvasWidthPx: (state) => Math.round(state.marketWidthMeters * state.scalePxPerMeter),
     canvasHeightPx: (state) => Math.round(state.marketHeightMeters * state.scalePxPerMeter),
@@ -175,6 +201,7 @@ export const useMarketStore = defineStore('market', {
     initFirebaseSync() {
       this.initTheme()
       this._captureInitialStallsState()
+      if (!this.published) this._publishFrom(this)
 
       if (!isRealFirebaseConfigured) return
 
@@ -206,10 +233,14 @@ export const useMarketStore = defineStore('market', {
           this.zones = JSON.parse(JSON.stringify(DEFAULT_ZONES))
           this.layoutObjects = JSON.parse(JSON.stringify(DEFAULT_LAYOUT_OBJECTS))
           this._captureInitialStallsState()
+          this._publishFrom(this)
         }
         this.isRealtimeConnected = true
         return
       }
+
+      // ผังที่ลูกค้าเห็น = ของที่บันทึกใน Firestore เสมอ ไม่ว่า admin จะมีงานค้างหรือไม่
+      this._publishRemote(data)
 
       // มีเอกสารผังแล้ว: Firestore ชนะเสมอ แม้ผังจะว่าง (admin ลบทุกอย่างแล้วบันทึก) ห้ามเอา default มาเติม
       if (Array.isArray(data.stalls)) {
@@ -233,6 +264,44 @@ export const useMarketStore = defineStore('market', {
       this.isRealtimeConnected = true
       this.lastSavedTime = formatThaiTime(new Date())
       this.persistToLocal()
+    },
+
+    /** ตั้งผังเผยแพร่จากสำเนาของ state (draft) */
+    _publishFrom(src) {
+      this.published = snapshotLayout(src)
+    },
+
+    /** ตั้งผังเผยแพร่จาก snapshot ของ Firestore (ฟิลด์ที่ไม่มีใน snapshot คงค่าเดิม) */
+    _publishRemote(data) {
+      const base = this.published || snapshotLayout(this)
+      this.published = snapshotLayout({
+        stalls: Array.isArray(data.stalls) ? data.stalls : base.stalls,
+        zones: Array.isArray(data.zones) ? data.zones : base.zones,
+        layoutObjects: Array.isArray(data.layoutObjects) ? data.layoutObjects : base.layoutObjects,
+        marketName: data.name || base.marketName,
+        marketWidthMeters: data.marketWidthMeters || base.marketWidthMeters,
+        marketHeightMeters: data.marketHeightMeters || base.marketHeightMeters,
+        gridSnapMeters: data.gridSnapMeters || base.gridSnapMeters
+      })
+    },
+
+    /** ยกเลิกการแก้ไขที่ยังไม่บันทึก: คืน draft เป็นผังที่บันทึกล่าสุด */
+    discardChanges() {
+      if (!this.published) return
+      const d = draftFromPublished(this.published)
+      this.stalls = d.stalls
+      this.zones = d.zones
+      this.layoutObjects = d.layoutObjects
+      this.marketName = d.marketName
+      this.marketWidthMeters = d.marketWidthMeters
+      this.marketHeightMeters = d.marketHeightMeters
+      this.gridSnapMeters = d.gridSnapMeters
+      this.selectedStallId = null
+      this.selectedObjectId = null
+      this.hasUnsavedChanges = false
+      this._captureInitialStallsState()
+      this.persistToLocal()
+      this.showNotification('ยกเลิกการแก้ไขแล้ว กลับเป็นผังที่บันทึกล่าสุด', 'info')
     },
 
     setMode(mode) {
@@ -260,13 +329,15 @@ export const useMarketStore = defineStore('market', {
     // ─── Local Persistence ────────────────────────────────────────────────────
     persistToLocal() {
       try {
-        localStorage.setItem('market_stalls', JSON.stringify(this.stalls))
-        localStorage.setItem('market_zones', JSON.stringify(this.zones))
-        localStorage.setItem('market_layout_objects', JSON.stringify(this.layoutObjects))
-        localStorage.setItem('market_name', this.marketName)
-        localStorage.setItem('market_width_m', String(this.marketWidthMeters))
-        localStorage.setItem('market_height_m', String(this.marketHeightMeters))
-        localStorage.setItem('market_grid_snap_m', String(this.gridSnapMeters))
+        // cache เก็บเฉพาะผังที่เผยแพร่แล้ว (งานที่ admin ยังไม่บันทึกไม่ไหลไปเป็น cache ของลูกค้า)
+        const p = this.published || this
+        localStorage.setItem('market_stalls', JSON.stringify(p.stalls))
+        localStorage.setItem('market_zones', JSON.stringify(p.zones))
+        localStorage.setItem('market_layout_objects', JSON.stringify(p.layoutObjects))
+        localStorage.setItem('market_name', p.marketName)
+        localStorage.setItem('market_width_m', String(p.marketWidthMeters))
+        localStorage.setItem('market_height_m', String(p.marketHeightMeters))
+        localStorage.setItem('market_grid_snap_m', String(p.gridSnapMeters))
         localStorage.setItem('app_theme', this.theme)
       } catch (err) {
         console.warn('LocalStorage save error:', err)
@@ -593,6 +664,7 @@ export const useMarketStore = defineStore('market', {
         if (this.initialStallsState[stallId]) {
           this.initialStallsState[stallId] = { ...this.initialStallsState[stallId], status: 'pending', bookedBy: res.bookedBy }
         }
+        if (this.published) patchPublishedStall(this.published, stallId, { status: 'pending', bookedBy: res.bookedBy })
         this.persistToLocal()
 
         this.showNotification(`ส่งการจองแผง ${stall.stallNo} แล้ว รอผู้ดูแลตรวจสลิป`, 'success')
@@ -664,6 +736,7 @@ export const useMarketStore = defineStore('market', {
         }
 
         this.stallsInFirestore = true
+        this._publishFrom(this) // ลูกค้าเห็นผังใหม่ทั้งชุดพร้อมกันหลังบันทึกสำเร็จ
         this.lastSavedTime = formatThaiTime(new Date())
         this.hasUnsavedChanges = false
         this._captureInitialStallsState()

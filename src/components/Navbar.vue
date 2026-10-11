@@ -245,6 +245,14 @@
             ></span>
           </button>
 
+          <button
+            v-if="marketStore.hasUnsavedChanges && !marketStore.isSaving"
+            @click="confirmDiscard"
+            class="px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition whitespace-nowrap"
+          >
+            ยกเลิกการแก้ไข
+          </button>
+
           <button 
             @click="marketStore.resetToDefaults()" 
             class="text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 underline transition text-[11px] ml-1 hidden lg:inline font-medium"
@@ -301,4 +309,10 @@ defineEmits([
 const unreadCount = computed(() => {
   return notificationStore.unreadCount(authStore.currentUser?.uid, authStore.isAdmin || authStore.isOwner)
 })
+
+function confirmDiscard() {
+  if (window.confirm('ยกเลิกการแก้ไขที่ยังไม่บันทึกทั้งหมด และกลับเป็นผังที่บันทึกล่าสุด?')) {
+    marketStore.discardChanges()
+  }
+}
 </script>
