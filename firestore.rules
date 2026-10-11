@@ -59,6 +59,20 @@ service cloud.firestore {
         && request.resource.data.bookedBy.tenantId == request.auth.uid;
     }
 
+    function isValidDecision(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      let stallPath = /databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId);
+      return (r.status == 'pending' || (r.status == 'needs_slip' && d.status == 'rejected'))
+        && d.status in ['approved', 'needs_slip', 'rejected']
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'decidedBy', 'decidedAt', 'updatedAt'])
+        && d.decidedBy == request.auth.uid
+        && d.decidedAt == request.time
+        && (d.status == 'approved'
+            || (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300))
+        && getAfter(stallPath).data.status == (d.status == 'approved' ? 'booked' : (d.status == 'rejected' ? 'available' : 'pending'));
+    }
+
     // ─── Bookings (Customer Transaction History) ─────────────────────────────
     // มีชื่อ/เบอร์โทร -> อ่านได้เฉพาะเจ้าของรายการและ admin
     // สร้างได้ต่อเมื่อแผงนั้นถูกจองในชื่อตัวเองในคำสั่งเขียนเดียวกัน (transaction) กันสร้างรายการปลอม
@@ -79,7 +93,10 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone',
              'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status'])
         && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
-      allow update, delete: if isAdmin();
+      // admin/owner ตัดสินได้เฉพาะ pending -> approved / needs_slip / rejected (และ needs_slip -> rejected)
+      // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน
+      allow update: if isAdmin() && isValidDecision(bookingId);
+      allow delete: if isAdmin();
     }
 
     // ─── Booking Slips (รูปสลิป แยกจาก bookings เพื่อไม่ให้รายการจองหนัก) ───────

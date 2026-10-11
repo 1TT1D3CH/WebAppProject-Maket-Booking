@@ -8,6 +8,10 @@ import {
   writeBatch,
   collection,
   deleteField,
+  query,
+  where,
+  orderBy,
+  limit,
   serverTimestamp
 } from 'firebase/firestore'
 import { toPublicBookedBy } from '../utils/stallSync'
@@ -217,4 +221,88 @@ export async function fetchBooking(bookingId) {
     console.warn('Fetch booking notice:', err.message)
     return null
   }
+}
+
+// ─── ตรวจสลิป (admin / owner) ────────────────────────────────────────────────
+
+/**
+ * ฟังรายการจองตามสถานะแบบ realtime (รูปสลิปไม่ได้มาด้วย ใช้ getSlip ตอนเปิดดู)
+ * ต้องมี index bookings (status, createdAt) ใน firestore.indexes.json
+ * @returns {Function} unsubscribe
+ */
+export function subscribeBookingsByStatus(statuses, { order = 'asc', max = 100 } = {}, onData, onError) {
+  if (!isRealFirebaseConfigured || !db) return () => {}
+  const q = query(
+    collection(db, 'bookings'),
+    where('status', 'in', statuses),
+    orderBy('createdAt', order),
+    limit(max)
+  )
+  return onSnapshot(q, (snap) => {
+    onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  }, onError)
+}
+
+/** การจองอื่นที่ใช้ไฟล์สลิปเดียวกัน (hash เดียวกัน) เตือนอย่างเดียว ไม่บล็อก */
+export async function findBookingsWithSameSlip(slipHash, excludeId) {
+  if (!isRealFirebaseConfigured || !db || !slipHash) return []
+  const snap = await getDocs(query(collection(db, 'bookings'), where('slipHash', '==', slipHash), limit(6)))
+  return snap.docs.filter(d => d.id !== excludeId).map(d => ({ id: d.id, ...d.data() }))
+}
+
+const DECISION_NOTICE = {
+  approved: (no) => ({ title: 'อนุมัติการจองแล้ว', message: `การจองแผง ${no} ของคุณได้รับการอนุมัติแล้ว` }),
+  needs_slip: (no, reason) => ({ title: 'ขอสลิปใหม่', message: `การจองแผง ${no}: กรุณาส่งสลิปใหม่ (${reason})` }),
+  rejected: (no, reason) => ({ title: 'การจองถูกปฏิเสธ', message: `การจองแผง ${no} ถูกปฏิเสธ (${reason})` })
+}
+
+/**
+ * ตัดสินการจอง: booking + สถานะแผง + แจ้งเตือนผู้เช่า ใน transaction เดียว
+ * approved -> แผง booked | rejected -> แผง available | needs_slip -> แผงยัง pending
+ * ถ้าถูกตัดสินไปแล้ว (admin อีกคนกดก่อน) จะโยน error code 'already-decided' ไม่ทับ
+ */
+export async function decideBooking({ bookingId, decision, reason = '', adminUid }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!['approved', 'needs_slip', 'rejected'].includes(decision)) throw new Error('การตัดสินไม่ถูกต้อง')
+  const cleanReason = String(reason || '').trim().slice(0, 300)
+  if (decision !== 'approved' && !cleanReason) throw new Error('กรุณาระบุเหตุผล')
+
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const bSnap = await tx.get(bookingRef)
+    if (!bSnap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = bSnap.data()
+
+    const canDecide = b.status === 'pending' || (b.status === 'needs_slip' && decision === 'rejected')
+    if (!canDecide) {
+      const err = new Error('รายการนี้ถูกตรวจไปแล้ว')
+      err.code = 'already-decided'
+      err.current = b
+      throw err
+    }
+
+    const stallRef = doc(stallsCol(), b.stallId)
+    const sSnap = await tx.get(stallRef)
+    if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้ (อาจถูกลบออกจากผัง)')
+
+    const update = { status: decision, decidedBy: adminUid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    if (decision !== 'approved') update.statusReason = cleanReason
+    tx.update(bookingRef, update)
+
+    const now = new Date().toISOString()
+    if (decision === 'approved') tx.update(stallRef, { status: 'booked', updatedAt: now })
+    if (decision === 'rejected') tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: now })
+
+    const stallNo = b.stallNo || sSnap.data().stallNo || ''
+    const notice = DECISION_NOTICE[decision](stallNo, cleanReason)
+    tx.set(doc(collection(db, 'notifications')), {
+      tenantId: b.tenantId,
+      stallId: b.stallId,
+      stallNo,
+      ...notice,
+      type: 'SLIP_REVIEW',
+      isRead: false,
+      createdAt: now
+    })
+  })
 }

@@ -23,6 +23,9 @@
       <!-- Member list (owner/admin only) -->
       <MembersPanel v-else-if="marketStore.activeMode === 'members' && authStore.isAdmin" />
 
+      <!-- ตรวจสลิปโอนเงิน (owner/admin only) -->
+      <SlipReviewPanel v-else-if="marketStore.activeMode === 'slips' && authStore.isAdmin" />
+
       <!-- Customer Interactive Booking View -->
       <CustomerStallMap 
         v-else
@@ -135,6 +138,8 @@ import CompleteProfileModal from './components/Auth/CompleteProfileModal.vue'
 import NotificationCenter from './components/Auth/NotificationCenter.vue'
 import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
 import MembersPanel from './components/Admin/MembersPanel.vue'
+import SlipReviewPanel from './components/Admin/SlipReviewPanel.vue'
+import { useSlipReviewStore } from './stores/slipReviewStore'
 
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
@@ -152,6 +157,7 @@ const isDev = import.meta.env.DEV
 const bookingTargetStall = ref(null)
 
 const notificationStore = useNotificationStore()
+const slipReviewStore = useSlipReviewStore()
 const mustChangePassword = computed(() => authStore.currentUser?.mustChangePassword === true)
 
 onMounted(() => {
@@ -176,9 +182,19 @@ watch(
   { immediate: true }
 )
 
+// admin/owner ฟังรายการรอตรวจสลิป (ใช้ทำ badge บนเมนู) ออกจากระบบแล้วหยุดฟัง
+watch(
+  () => [authStore.currentUser?.uid, authStore.isAdmin],
+  ([uid, isAdmin]) => {
+    if (uid && isAdmin) slipReviewStore.start()
+    else slipReviewStore.stop()
+  },
+  { immediate: true }
+)
+
 // logout / ถูกลดสิทธิ์ขณะอยู่โหมด admin ให้กลับไปหน้าลูกค้า
 watch(() => authStore.isAdmin, (isAdmin) => {
-  if (!isAdmin && ['admin', 'members'].includes(marketStore.activeMode)) {
+  if (!isAdmin && ['admin', 'members', 'slips'].includes(marketStore.activeMode)) {
     marketStore.setMode('customer')
   }
 })

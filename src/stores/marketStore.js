@@ -227,7 +227,7 @@ export const useMarketStore = defineStore('market', {
     },
 
     setMode(mode) {
-      if ((mode === 'admin' || mode === 'members') && !useAuthStore().isAdmin) {
+      if ((mode === 'admin' || mode === 'members' || mode === 'slips') && !useAuthStore().isAdmin) {
         this.showNotification('เฉพาะผู้ดูแลระบบหรือเจ้าของตลาดเท่านั้นที่เข้าโหมดแก้ไขผังได้', 'error')
         return false
       }

@@ -310,12 +310,90 @@ describe('bookings (B1, B9)', () => {
     await assertFails(setDoc(doc(anon(), 'bookings/b3'), newBooking({ tenantId: 'anon1' })))
   })
 
-  test('tenant แก้/ลบรายการจองไม่ได้ แต่ admin ทำได้', async () => {
+  test('tenant แก้/ลบรายการจองไม่ได้', async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'bookings/b1'), { tenantId: 'bob', stallId: 's1' })
     })
     await assertFails(updateDoc(doc(tenant('bob'), 'bookings/b1'), { status: 'x' }))
     await assertFails(deleteDoc(doc(tenant('bob'), 'bookings/b1')))
-    await assertSucceeds(updateDoc(doc(tenant('admin1'), 'bookings/b1'), { status: 'cancelled' }))
+  })
+})
+
+describe('ตรวจสลิป: admin/owner ตัดสินการจอง', () => {
+  // แผง s1 + booking bk1 ของ alice อยู่ในสถานะรอตรวจ
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, `${STALL}/s1`), { stallNo: 'A1', x: 10, y: 10, price: 500, status: 'pending', bookedBy: bookedBy('alice', 'bk1') })
+      await setDoc(doc(db, 'bookings/bk1'), {
+        tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111',
+        amountDue: 500, slipHash: 'h', status: 'pending'
+      })
+    })
+  })
+
+  const decide = (uid, bookingPatch, stallPatch, id = 'bk1') => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    batch.update(doc(db, `bookings/${id}`), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...bookingPatch })
+    if (stallPatch) batch.update(doc(db, `${STALL}/s1`), stallPatch)
+    return batch.commit()
+  }
+
+  test('admin อนุมัติ: booking approved + แผง booked', async () => {
+    await assertSucceeds(decide('admin1', { status: 'approved' }, { status: 'booked' }))
+  })
+
+  test('owner อนุมัติได้เหมือน admin', async () => {
+    await assertSucceeds(decide('owner1', { status: 'approved' }, { status: 'booked' }))
+  })
+
+  test('admin ปฏิเสธพร้อมเหตุผล: แผงกลับ available และปล่อยผู้จอง', async () => {
+    await assertSucceeds(decide('admin1', { status: 'rejected', statusReason: 'ยอดไม่ตรง' }, { status: 'available', bookedBy: null }))
+  })
+
+  test('admin ขอสลิปใหม่พร้อมเหตุผล: แผงยัง pending', async () => {
+    await assertSucceeds(decide('admin1', { status: 'needs_slip', statusReason: 'รูปไม่ชัด' }, null))
+  })
+
+  test('ปฏิเสธ/ขอสลิปใหม่โดยไม่ใส่เหตุผลไม่ได้', async () => {
+    await assertFails(decide('admin1', { status: 'rejected' }, { status: 'available', bookedBy: null }))
+    await assertFails(decide('admin1', { status: 'needs_slip', statusReason: '' }, null))
+  })
+
+  test('อนุมัติโดยไม่เปลี่ยนแผงเป็น booked ไม่ได้ (สถานะแผงต้องตามผล)', async () => {
+    await assertFails(decide('admin1', { status: 'approved' }, null))
+    await assertFails(decide('admin1', { status: 'approved' }, { status: 'available', bookedBy: null }))
+  })
+
+  test('tenant อนุมัติ/ปฏิเสธการจองของตัวเองไม่ได้', async () => {
+    await assertFails(decide('alice', { status: 'approved' }, { status: 'booked' }))
+  })
+
+  test('admin แก้ยอดเงิน/ผู้เช่า/แฮชสลิปไม่ได้', async () => {
+    await assertFails(decide('admin1', { status: 'approved', amountDue: 1 }, { status: 'booked' }))
+    await assertFails(decide('admin1', { status: 'approved', tenantId: 'bob' }, { status: 'booked' }))
+    await assertFails(decide('admin1', { status: 'approved', slipHash: 'x' }, { status: 'booked' }))
+  })
+
+  test('ต้องบันทึก decidedBy เป็นตัวเอง', async () => {
+    await assertFails(decide('admin1', { status: 'approved', decidedBy: 'owner1' }, { status: 'booked' }))
+  })
+
+  test('เปลี่ยนสถานะย้อนกลับ approved -> pending ไม่ได้', async () => {
+    await assertSucceeds(decide('admin1', { status: 'approved' }, { status: 'booked' }))
+    await assertFails(decide('admin1', { status: 'pending' }, { status: 'pending' }))
+    await assertFails(decide('admin1', { status: 'rejected', statusReason: 'x' }, { status: 'available', bookedBy: null }))
+  })
+
+  test('needs_slip -> rejected ได้ แต่ needs_slip -> approved ไม่ได้', async () => {
+    await assertSucceeds(decide('admin1', { status: 'needs_slip', statusReason: 'รูปไม่ชัด' }, null))
+    await assertFails(decide('admin1', { status: 'approved' }, { status: 'booked' }))
+    await assertSucceeds(decide('admin1', { status: 'rejected', statusReason: 'ไม่ส่งสลิปใหม่' }, { status: 'available', bookedBy: null }))
+  })
+
+  test('admin ส่งแจ้งเตือนผลการตรวจถึงผู้เช่าได้', async () => {
+    const db = tenant('admin1')
+    await assertSucceeds(setDoc(doc(db, 'notifications/n-slip'), { tenantId: 'alice', title: 'อนุมัติการจองแล้ว', type: 'SLIP_REVIEW', isRead: false }))
   })
 })
