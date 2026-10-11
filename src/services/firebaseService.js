@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore'
 import { toPublicBookedBy } from '../utils/stallSync'
 import { slipRef, buildSlipDoc } from './slipStorage'
+import { keepAlive } from '../utils/keepAlive'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
@@ -238,9 +239,13 @@ export function subscribeBookingsByStatus(statuses, { order = 'asc', max = 100 }
     orderBy('createdAt', order),
     limit(max)
   )
-  return onSnapshot(q, (snap) => {
+  return keepAlive(({ ok, fail }) => onSnapshot(q, (snap) => {
+    ok()
     onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  }, onError)
+  }, (err) => {
+    onError?.(err)
+    fail(err)
+  }))
 }
 
 /** การจองอื่นที่ใช้ไฟล์สลิปเดียวกัน (hash เดียวกัน) เตือนอย่างเดียว ไม่บล็อก */
@@ -313,7 +318,13 @@ export async function decideBooking({ bookingId, decision, reason = '', adminUid
 export function subscribeMyBookings(uid, onData, onError) {
   if (!isRealFirebaseConfigured || !db || !uid) return () => {}
   const q = query(collection(db, 'bookings'), where('tenantId', '==', uid), orderBy('createdAt', 'desc'), limit(50))
-  return onSnapshot(q, (snap) => onData(snap.docs.map(d => ({ id: d.id, ...d.data() }))), onError)
+  return keepAlive(({ ok, fail }) => onSnapshot(q, (snap) => {
+    ok()
+    onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  }, (err) => {
+    onError?.(err)
+    fail(err)
+  }))
 }
 
 /**

@@ -174,11 +174,14 @@ async function loadDuplicates() {
   }
 }
 
-watch(() => props.booking.id, () => {
-  closeReason()
-  actionError.value = ''
-  checks.value = [false, false, false, false]
-  fullscreen.value = false
+// เปลี่ยนรายการ หรือผู้เช่าส่งสลิปใหม่ระหว่างที่เปิดดู -> โหลดรูปใหม่เอง
+watch(() => [props.booking.id, props.booking.slipHash, props.booking.slipUploadedAt?.toMillis?.() ?? 0], ([id], [prevId]) => {
+  if (id !== prevId) {
+    closeReason()
+    actionError.value = ''
+    checks.value = [false, false, false, false]
+    fullscreen.value = false
+  }
   loadSlip()
   loadDuplicates()
 }, { immediate: true })

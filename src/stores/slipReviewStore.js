@@ -58,19 +58,28 @@ export const useSlipReviewStore = defineStore('slipReview', {
       this.slipCache = {}
     },
 
-    /** โหลดรูปสลิป (เก็บ cache) คืน null ถ้าไม่มีรูป; โยน error ถ้าอ่านไม่ได้ */
+    /**
+     * โหลดรูปสลิป (เก็บ cache) คืน null ถ้าไม่มีรูป; โยน error ถ้าอ่านไม่ได้
+     * key ผูกกับเวลาที่ส่งสลิป: ผู้เช่าส่งสลิปใหม่แล้วจะโหลดรูปใหม่เอง ไม่ต้อง F5
+     */
     async loadSlip(bookingId) {
-      if (bookingId in this.slipCache) return this.slipCache[bookingId]
+      const key = this.slipKey(bookingId)
+      if (key in this.slipCache) return this.slipCache[key]
       const slip = await getSlip(bookingId)
       // เก็บ cache ไม่เกิน 8 รูป (รูปละได้ถึง ~700 KB)
       const keys = Object.keys(this.slipCache)
       if (keys.length >= 8) delete this.slipCache[keys[0]]
-      this.slipCache[bookingId] = slip ? { dataUrl: slip.dataUrl, mime: slip.mime } : null
-      return this.slipCache[bookingId]
+      this.slipCache[key] = slip ? { dataUrl: slip.dataUrl, mime: slip.mime } : null
+      return this.slipCache[key]
+    },
+
+    slipKey(bookingId) {
+      const b = this.byId(bookingId)
+      return `${bookingId}:${b?.slipUploadedAt?.toMillis?.() ?? 0}:${b?.slipHash ?? ''}`
     },
 
     prefetch(bookingId) {
-      if (!bookingId || bookingId in this.slipCache) return
+      if (!bookingId || this.slipKey(bookingId) in this.slipCache) return
       this.loadSlip(bookingId).catch(() => {})
     },
 

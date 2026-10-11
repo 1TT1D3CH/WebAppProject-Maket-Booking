@@ -1,3 +1,4 @@
+import { keepAlive } from '../utils/keepAlive'
 import { defineStore } from 'pinia'
 import { db, isRealFirebaseConfigured } from '../firebase/config'
 import { 
@@ -117,7 +118,8 @@ export const useNotificationStore = defineStore('notification', {
           ? notifCollection
           : query(notifCollection, where('tenantId', '==', uid))
 
-        this.unsubscribeListener = onSnapshot(notifQuery, (snapshot) => {
+        this.unsubscribeListener = keepAlive(({ ok, fail }) => onSnapshot(notifQuery, (snapshot) => {
+          ok()
           const remoteItems = []
           snapshot.forEach((docSnap) => {
             const data = docSnap.data()
@@ -135,7 +137,8 @@ export const useNotificationStore = defineStore('notification', {
           this.persistLocal()
         }, (err) => {
           console.warn('Notification snapshot notice:', err.message)
-        })
+          fail(err) // ฟื้นเองเมื่อเน็ตกลับมา ไม่ต้อง F5
+        }))
       } catch (e) {
         console.warn('Init notification sync error:', e)
       }
