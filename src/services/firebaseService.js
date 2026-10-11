@@ -69,16 +69,19 @@ export function subscribeToMarketLayout(onDataReceived, onError) {
     if (onError) onError(err)
   }
 
-  const unsubMarket = onSnapshot(marketRef(), (snap) => {
+  // keepAlive: ถ้า listener พัง (เน็ตหลุด ฯลฯ) จะเปิดใหม่เอง ไม่ต้องให้ผู้ใช้กด F5
+  const unsubMarket = keepAlive(({ ok, fail: retry }) => onSnapshot(marketRef(), (snap) => {
+    ok()
     marketData = snap.exists() ? snap.data() : null
     marketReady = true
     emit()
-  }, fail)
+  }, (err) => { fail(err); retry(err) }))
 
-  const unsubStalls = onSnapshot(stallsCol(), (snap) => {
+  const unsubStalls = keepAlive(({ ok, fail: retry }) => onSnapshot(stallsCol(), (snap) => {
+    ok()
     stallDocs = snap.docs.map(d => ({ ...d.data(), id: d.id }))
     emit()
-  }, fail)
+  }, (err) => { fail(err); retry(err) }))
 
   return () => {
     unsubMarket()

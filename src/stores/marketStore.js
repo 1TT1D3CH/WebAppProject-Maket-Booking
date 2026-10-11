@@ -53,6 +53,7 @@ export const useMarketStore = defineStore('market', {
     
     // Firebase & System Status
     isSaving: false,
+    _pendingRemote: null, // snapshot ผังล่าสุดที่มาระหว่าง admin กำลังบันทึก
     isLoading: false,
     isRealtimeConnected: false,
     lastSavedTime: null,
@@ -180,50 +181,58 @@ export const useMarketStore = defineStore('market', {
       if (!this.unsubscribeRealtime) {
         this.unsubscribeRealtime = subscribeToMarketLayout(
           (data) => {
-            // หากอยู่ระหว่างการบันทึกผังของ Admin ให้ข้าม เพื่อไม่ให้ snapshot ล่วงหน้ามาลบล้าง Diffing
-            if (this.isSaving) return
-
-            this.stallsInFirestore = data.stallsInFirestore
-            const hadUnsaved = this.hasUnsavedChanges
-
-            // ยังไม่มีเอกสารผังใน Firestore เลย: ใช้ค่า default เป็นผังตั้งต้น (admin เป็นคนบันทึกสร้างเอกสารครั้งแรก)
-            if (!data.exists) {
-              if (!hadUnsaved && this.stalls.length === 0 && this.layoutObjects.length === 0 && this.zones.length === 0) {
-                this.stalls = JSON.parse(JSON.stringify(DEFAULT_STALLS))
-                this.zones = JSON.parse(JSON.stringify(DEFAULT_ZONES))
-                this.layoutObjects = JSON.parse(JSON.stringify(DEFAULT_LAYOUT_OBJECTS))
-                this._captureInitialStallsState()
-              }
-              this.isRealtimeConnected = true
+            // อยู่ระหว่างบันทึกผังของ Admin: เก็บ snapshot ล่าสุดไว้ใช้หลังบันทึกเสร็จ
+            // (เดิมทิ้งไปเลย ทำให้การจองที่เข้ามาช่วงนั้นไม่แสดงจนกว่าจะมีการเปลี่ยนครั้งถัดไป)
+            if (this.isSaving) {
+              this._pendingRemote = data
               return
             }
-
-            // มีเอกสารผังแล้ว: Firestore ชนะเสมอ แม้ผังจะว่าง (admin ลบทุกอย่างแล้วบันทึก) ห้ามเอา default มาเติม
-            if (Array.isArray(data.stalls)) {
-              // มีงานที่ admin ยังไม่ได้บันทึก: รวมเฉพาะการจองใหม่ ไม่ทับงานที่แก้ไว้ (C5)
-              const merged = mergeRemoteStalls(this.stalls, data.stalls, this.initialStallsState, hadUnsaved)
-              this.stalls = merged.stalls
-              if (merged.initial) this.initialStallsState = merged.initial
-            }
-
-            if (!hadUnsaved) {
-              if (Array.isArray(data.zones)) this.zones = data.zones
-              if (Array.isArray(data.layoutObjects)) this.layoutObjects = data.layoutObjects
-              if (data.name) this.marketName = data.name
-              if (data.marketWidthMeters) this.marketWidthMeters = data.marketWidthMeters
-              if (data.marketHeightMeters) this.marketHeightMeters = data.marketHeightMeters
-              if (data.gridSnapMeters) this.gridSnapMeters = data.gridSnapMeters
-              this.hasUnsavedChanges = false
-              this._captureInitialStallsState()
-            }
-
-            this.isRealtimeConnected = true
-            this.lastSavedTime = formatThaiTime(new Date())
-            this.persistToLocal()
+            this._applyRemoteLayout(data)
           },
           () => { this.isRealtimeConnected = false }
         )
       }
+    },
+
+    /** นำ snapshot ผังจาก Firestore มารวมกับสถานะในเครื่อง */
+    _applyRemoteLayout(data) {
+      this.stallsInFirestore = data.stallsInFirestore
+      const hadUnsaved = this.hasUnsavedChanges
+
+      // ยังไม่มีเอกสารผังใน Firestore เลย: ใช้ค่า default เป็นผังตั้งต้น (admin เป็นคนบันทึกสร้างเอกสารครั้งแรก)
+      if (!data.exists) {
+        if (!hadUnsaved && this.stalls.length === 0 && this.layoutObjects.length === 0 && this.zones.length === 0) {
+          this.stalls = JSON.parse(JSON.stringify(DEFAULT_STALLS))
+          this.zones = JSON.parse(JSON.stringify(DEFAULT_ZONES))
+          this.layoutObjects = JSON.parse(JSON.stringify(DEFAULT_LAYOUT_OBJECTS))
+          this._captureInitialStallsState()
+        }
+        this.isRealtimeConnected = true
+        return
+      }
+
+      // มีเอกสารผังแล้ว: Firestore ชนะเสมอ แม้ผังจะว่าง (admin ลบทุกอย่างแล้วบันทึก) ห้ามเอา default มาเติม
+      if (Array.isArray(data.stalls)) {
+        // มีงานที่ admin ยังไม่ได้บันทึก: รวมเฉพาะการจองใหม่ ไม่ทับงานที่แก้ไว้ (C5)
+        const merged = mergeRemoteStalls(this.stalls, data.stalls, this.initialStallsState, hadUnsaved)
+        this.stalls = merged.stalls
+        if (merged.initial) this.initialStallsState = merged.initial
+      }
+
+      if (!hadUnsaved) {
+        if (Array.isArray(data.zones)) this.zones = data.zones
+        if (Array.isArray(data.layoutObjects)) this.layoutObjects = data.layoutObjects
+        if (data.name) this.marketName = data.name
+        if (data.marketWidthMeters) this.marketWidthMeters = data.marketWidthMeters
+        if (data.marketHeightMeters) this.marketHeightMeters = data.marketHeightMeters
+        if (data.gridSnapMeters) this.gridSnapMeters = data.gridSnapMeters
+        this.hasUnsavedChanges = false
+        this._captureInitialStallsState()
+      }
+
+      this.isRealtimeConnected = true
+      this.lastSavedTime = formatThaiTime(new Date())
+      this.persistToLocal()
     },
 
     setMode(mode) {
@@ -675,6 +684,12 @@ export const useMarketStore = defineStore('market', {
         return false
       } finally {
         this.isSaving = false
+        // รับ snapshot ที่ค้างระหว่างบันทึก (ถ้าบันทึกล้ม งานที่ยังไม่บันทึกจะถูกรวมแบบ C5 ไม่ถูกทับ)
+        if (this._pendingRemote) {
+          const pending = this._pendingRemote
+          this._pendingRemote = null
+          this._applyRemoteLayout(pending)
+        }
       }
     },
 
