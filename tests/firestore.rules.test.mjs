@@ -243,6 +243,10 @@ describe('bookings (B1, B9)', () => {
     await assertSucceeds(bookBatch())
   })
 
+  test('จองพร้อมสลิปขนาดจริง (~700,000 ตัวอักษร) สำเร็จ', async () => {
+    await assertSucceeds(bookBatch({ slip: { dataUrl: 'data:image/webp;base64,' + 'A'.repeat(699000) } }))
+  })
+
   test('จองโดยไม่มีสลิปไม่ได้', async () => {
     await assertFails(bookBatch({ withSlip: false }))
   })
