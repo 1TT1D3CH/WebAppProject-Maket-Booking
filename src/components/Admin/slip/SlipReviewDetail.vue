@@ -175,7 +175,10 @@ async function loadDuplicates() {
 }
 
 // เปลี่ยนรายการ หรือผู้เช่าส่งสลิปใหม่ระหว่างที่เปิดดู -> โหลดรูปใหม่เอง
-watch(() => [props.booking.id, props.booking.slipHash, props.booking.slipUploadedAt?.toMillis?.() ?? 0], ([id], [prevId]) => {
+watch(() => [props.booking.id, props.booking.slipHash, props.booking.slipUploadedAt?.toMillis?.() ?? 0], (now, before) => {
+  // รอบแรก (immediate) before เป็น undefined ต้องไม่ destructure ตรง ๆ
+  const id = now[0]
+  const prevId = before ? before[0] : undefined
   if (id !== prevId) {
     closeReason()
     actionError.value = ''
