@@ -29,7 +29,7 @@
           </button>
           
           <button
-            v-for="zone in marketStore.zones"
+            v-for="zone in marketStore.pub.zones"
             :key="zone.id"
             @click="marketStore.filterZoneId = zone.id"
             class="px-3.5 py-1.5 rounded-2xl text-xs font-semibold whitespace-nowrap transition-all duration-150 flex items-center gap-1.5 border"
@@ -74,8 +74,8 @@
       <div 
         class="relative mx-auto scale-90 origin-top-left sm:scale-100"
         :style="{
-          width: `${marketStore.canvasWidthPx + 60}px`,
-          height: `${marketStore.canvasHeightPx + 60}px`
+          width: `${marketStore.pubCanvasWidthPx + 60}px`,
+          height: `${marketStore.pubCanvasHeightPx + 60}px`
         }"
       >
         
@@ -105,18 +105,18 @@
           :style="{
             left: '10px',
             top: '10px',
-            width: `${marketStore.canvasWidthPx}px`,
-            height: `${marketStore.canvasHeightPx}px`
+            width: `${marketStore.pubCanvasWidthPx}px`,
+            height: `${marketStore.pubCanvasHeightPx}px`
           }"
         >
           <div class="text-right text-xs text-slate-500 dark:text-slate-400 font-mono font-medium">
-            ขนาดผังตลาด: {{ marketStore.marketWidthMeters }} × {{ marketStore.marketHeightMeters }} ม. ({{ marketStore.totalMarketAreaSqM }} ตร.ม.)
+            ขนาดผังตลาด: {{ marketStore.pub.marketWidthMeters }} × {{ marketStore.pub.marketHeightMeters }} ม. ({{ marketStore.pubTotalAreaSqM }} ตร.ม.)
           </div>
         </div>
 
         <!-- ─── ARCHITECTURE OBJECTS LAYER (Landmarks & Walkways for Customer View) ─── -->
         <div
-          v-for="obj in marketStore.layoutObjects"
+          v-for="obj in marketStore.pub.layoutObjects"
           :key="obj.id"
           class="absolute rounded-2xl border transition-all pointer-events-auto flex items-center justify-center p-2 shadow-xs backdrop-blur-xs"
           :class="[
@@ -142,11 +142,16 @@
         </div>
 
         <!-- ─── STALL INTERACTIVE CARDS ─── -->
+        <!-- แผงที่ที่ไม่พอแสดงแค่ชื่อแผง (สีบอกสถานะ) รายละเอียดเต็มดูได้โดยแตะแผง -->
         <div
-          v-for="stall in marketStore.filteredStalls"
+          v-for="stall in marketStore.pubFilteredStalls"
           :key="stall.id"
-          class="absolute rounded-2xl border-2 transition-all duration-200 shadow-xs hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between p-2.5 group backdrop-blur-xs"
+          :title="stallTitle(stall)"
+          :aria-label="stallTitle(stall)"
+          role="button"
+          class="absolute rounded-2xl border-2 transition-all duration-200 shadow-xs hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between group backdrop-blur-xs overflow-hidden"
           :class="[
+            isNameOnly(stall) ? 'items-center justify-center p-0.5' : 'p-2',
             selectedCustomerStallId === stall.id 
               ? 'ring-4 ring-indigo-600 border-indigo-500 bg-indigo-50/90 dark:bg-indigo-950/90 scale-105 z-20 shadow-xl' 
               : getCustomerStallClasses(stall),
@@ -159,51 +164,44 @@
           }"
           @click="onSelectStall(stall)"
         >
-          <!-- Zone Header Pill Line -->
-          <div 
-            class="h-1.5 w-full rounded-full mb-1 transition-transform group-hover:scale-x-105 shadow-xs"
-            :style="{ backgroundColor: marketStore.getZoneById(stall.zoneId)?.color }"
-          ></div>
+          <!-- แผงเล็ก: ชื่อแผงบรรทัดเดียว ตัดท้ายเป็น … ไม่ขึ้นบรรทัดใหม่ -->
+          <span
+            v-if="isNameOnly(stall)"
+            class="w-full text-center font-bold font-mono tracking-tight whitespace-nowrap overflow-hidden text-ellipsis leading-tight text-slate-900 dark:text-white"
+            :class="isTinyStall(stall.width) ? 'text-[10px]' : 'text-xs'"
+          >{{ stall.stallNo }}</span>
 
-          <!-- Stall No & Price Badge -->
-          <div class="flex items-center justify-between leading-relaxed">
-            <span class="text-xs sm:text-sm font-bold text-slate-900 dark:text-white font-mono tracking-tight drop-shadow-xs pt-0.5">{{ stall.stallNo }}</span>
-            <span 
-              class="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold transition-transform group-hover:scale-105 shadow-xs"
-              :class="stall.status === 'available' ? 'bg-emerald-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'"
-            >
-              ฿{{ stall.price }}
-            </span>
-          </div>
+          <template v-else>
+            <div 
+              class="h-1 w-full rounded-full shrink-0 shadow-xs"
+              :style="{ backgroundColor: marketStore.pubZoneById(stall.zoneId)?.color }"
+            ></div>
 
-          <!-- Stall Meter Dimensions -->
-          <div class="my-1">
-            <span class="text-[10px] px-1.5 py-0.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-mono font-semibold shadow-xs">
-              {{ marketStore.pxToM(stall.width) }}×{{ marketStore.pxToM(stall.height) }} ม.
-            </span>
-          </div>
+            <div class="flex items-center justify-between gap-1 min-w-0">
+              <span class="text-xs sm:text-sm font-bold text-slate-900 dark:text-white font-mono tracking-tight truncate whitespace-nowrap">{{ stall.stallNo }}</span>
+              <span 
+                class="text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold shadow-xs shrink-0 whitespace-nowrap"
+                :class="stall.status === 'available' ? 'bg-emerald-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'"
+              >
+                ฿{{ stall.price }}
+              </span>
+            </div>
 
-          <!-- Status & Booking Action Hint -->
-          <div class="flex items-center justify-between mt-auto">
-            <span class="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate max-w-[80px]">
-              {{ marketStore.getZoneById(stall.zoneId)?.name }}
+            <span class="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate whitespace-nowrap">
+              {{ marketStore.pubZoneById(stall.zoneId)?.name }}
             </span>
+
             <span 
               v-if="stall.status === 'available'"
-              class="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5"
+              class="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap flex items-center gap-0.5"
             >
               จองแผง <ChevronRight class="w-3 h-3" />
             </span>
-            <span v-else-if="stall.status === 'pending'" class="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
-              รอตรวจสลิป
+            <span v-else class="text-[10px] font-semibold whitespace-nowrap truncate"
+              :class="stall.status === 'pending' ? 'text-amber-600 dark:text-amber-400' : stall.status === 'disabled' ? 'text-rose-500 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'">
+              {{ statusText(stall.status) }}
             </span>
-            <span v-else-if="stall.status === 'booked'" class="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">
-              จองแล้ว
-            </span>
-            <span v-else-if="stall.status === 'disabled'" class="text-[10px] text-rose-500 dark:text-rose-400 font-semibold">
-              ปิดบริการ
-            </span>
-          </div>
+          </template>
         </div>
 
       </div>
@@ -220,7 +218,7 @@
         <div class="flex items-start sm:items-center gap-3">
           <div 
             class="w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-white text-base shadow-md font-mono shrink-0"
-            :style="{ backgroundColor: marketStore.getZoneById(selectedStall.zoneId)?.color }"
+            :style="{ backgroundColor: marketStore.pubZoneById(selectedStall.zoneId)?.color }"
           >
             {{ selectedStall.stallNo }}
           </div>
@@ -228,7 +226,7 @@
             <div class="flex flex-wrap items-center gap-2">
               <h3 class="text-sm font-bold text-slate-900 dark:text-white">แผงค้า {{ selectedStall.stallNo }}</h3>
               <span class="text-[11px] px-2.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg border border-slate-200 dark:border-slate-700 font-medium">
-                {{ marketStore.getZoneById(selectedStall.zoneId)?.name }}
+                {{ marketStore.pubZoneById(selectedStall.zoneId)?.name }}
               </span>
               <span class="text-[11px] px-2.5 py-0.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 rounded-lg border border-indigo-200 dark:border-indigo-800 font-mono font-semibold">
                 ขนาด {{ selectedStallMetrics.widthM }} × {{ selectedStallMetrics.heightM }} ม. ({{ selectedStallMetrics.areaSqM }} ตร.ม.)
@@ -238,6 +236,14 @@
               อัตราค่าเช่า: <strong class="text-emerald-700 dark:text-emerald-400 font-mono text-sm font-bold">฿{{ selectedStall.price }}</strong> / วัน 
               <span v-if="selectedStall.notes" class="ml-2 text-slate-500 dark:text-slate-400 font-normal">({{ selectedStall.notes }})</span>
             </p>
+            <!-- แผงที่มีผู้จอง: บอกแค่ชื่อร้านกับประเภทสินค้า (ไม่แสดงชื่อจริง/เบอร์โทร) -->
+            <div
+              v-if="selectedStall.status === 'booked' || selectedStall.status === 'pending'"
+              class="text-xs text-slate-700 dark:text-slate-300 space-y-0.5 pt-1"
+            >
+              <p><span class="text-slate-500 dark:text-slate-400">ร้าน:</span> <strong>{{ selectedStall.bookedBy?.shopName || 'ไม่ได้ระบุ' }}</strong></p>
+              <p><span class="text-slate-500 dark:text-slate-400">ขาย:</span> <strong>{{ selectedStall.bookedBy?.goodsType || 'ไม่ได้ระบุ' }}</strong></p>
+            </div>
           </div>
         </div>
 
@@ -245,7 +251,7 @@
         <div class="flex items-center justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-slate-800">
           <button
             @click="selectedCustomerStallId = null"
-            class="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold transition sm:hidden"
+            class="px-4 py-2.5 min-h-[44px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold transition"
           >
             ปิด
           </button>
@@ -273,6 +279,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
+import { pickStallLabelMode, isTinyStall } from '../../utils/stallLabel'
 import { 
   Search, 
   ChevronRight, 
@@ -294,12 +301,18 @@ const marketStore = useMarketStore()
 const selectedCustomerStallId = ref(null)
 
 const selectedStall = computed(() => {
-  return marketStore.stalls.find(s => s.id === selectedCustomerStallId.value)
+  return marketStore.pub.stalls.find(s => s.id === selectedCustomerStallId.value)
 })
 
 const selectedStallMetrics = computed(() => {
   return marketStore.getStallMetrics(selectedStall.value)
 })
+
+const STATUS_TEXT = { available: 'ว่าง', pending: 'รอตรวจสลิป', booked: 'จองแล้ว', disabled: 'ปิดบริการ' }
+const statusText = (status) => STATUS_TEXT[status] || ''
+const isNameOnly = (stall) => pickStallLabelMode(stall.width, stall.height) === 'name'
+const stallTitle = (stall) =>
+  `${stall.stallNo} · ${marketStore.pubZoneById(stall.zoneId)?.name} · ${statusText(stall.status)} · ฿${stall.price}`
 
 function onSelectStall(stall) {
   selectedCustomerStallId.value = stall.id
@@ -311,13 +324,13 @@ function showFacilityToast(obj) {
 
 function getCustomerStallClasses(stall) {
   if (stall.status === 'pending') {
-    return 'bg-amber-50/90 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border-amber-300 dark:border-amber-700 cursor-not-allowed'
+    return 'bg-amber-50/90 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border-amber-300 dark:border-amber-700'
   }
   if (stall.status === 'booked') {
-    return 'bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 opacity-75 cursor-not-allowed'
+    return 'bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 opacity-75'
   }
   if (stall.status === 'disabled') {
-    return 'bg-slate-200/60 dark:bg-slate-800/60 text-slate-400 border-slate-300 dark:border-slate-700 opacity-50 cursor-not-allowed'
+    return 'bg-slate-200/60 dark:bg-slate-800/60 text-slate-400 border-slate-300 dark:border-slate-700 opacity-50'
   }
   // Available
   return 'bg-emerald-50/90 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border-emerald-300/90 dark:border-emerald-800 hover:border-emerald-500 hover:bg-emerald-100/80 shadow-xs'
