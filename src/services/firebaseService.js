@@ -306,3 +306,69 @@ export async function decideBooking({ bookingId, decision, reason = '', adminUid
     })
   })
 }
+
+// ─── ฝั่งผู้เช่า: การจองของฉัน ───────────────────────────────────────────────
+
+/** ฟังการจองของตัวเองแบบ realtime ต้องมี index bookings (tenantId, createdAt DESC) */
+export function subscribeMyBookings(uid, onData, onError) {
+  if (!isRealFirebaseConfigured || !db || !uid) return () => {}
+  const q = query(collection(db, 'bookings'), where('tenantId', '==', uid), orderBy('createdAt', 'desc'), limit(50))
+  return onSnapshot(q, (snap) => onData(snap.docs.map(d => ({ id: d.id, ...d.data() }))), onError)
+}
+
+/**
+ * ส่งสลิปใหม่หลังถูกขอ: อัปเดตรูป + booking กลับเป็น pending (ล้างเหตุผล) ใน transaction เดียว
+ * @param {{dataUrl, mime, bytes, hash}} slip
+ */
+export async function resubmitSlip({ bookingId, tenantId, slip }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!slip?.dataUrl) throw new Error('กรุณาแนบสลิปใหม่')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    if (snap.data().status !== 'needs_slip') {
+      const err = new Error('รายการนี้ไม่ได้อยู่ในสถานะรอสลิปใหม่แล้ว')
+      err.code = 'bad-status'
+      throw err
+    }
+    tx.update(bookingRef, {
+      status: 'pending',
+      statusReason: deleteField(),
+      slipHash: slip.hash,
+      slipUploadedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+    tx.set(slipRef(bookingId), buildSlipDoc({
+      tenantId,
+      marketId: MARKET_ID,
+      dataUrl: slip.dataUrl,
+      mime: slip.mime,
+      bytes: slip.bytes,
+      createdAt: serverTimestamp()
+    }))
+  })
+}
+
+/** ยกเลิกการจองที่ยังรอตรวจ (pending / needs_slip) และปล่อยแผงใน transaction เดียว */
+export async function cancelMyBooking(bookingId) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const bSnap = await tx.get(bookingRef)
+    if (!bSnap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = bSnap.data()
+    if (!['pending', 'needs_slip'].includes(b.status)) {
+      const err = new Error('ยกเลิกเองไม่ได้ในสถานะนี้ กรุณาติดต่อผู้ดูแลตลาด')
+      err.code = 'bad-status'
+      throw err
+    }
+    const stallRef = doc(stallsCol(), b.stallId)
+    const sSnap = await tx.get(stallRef)
+    if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้')
+    tx.update(bookingRef, { status: 'cancelled', updatedAt: serverTimestamp() })
+    if (sSnap.data().bookedBy?.bookingId === bookingId) {
+      tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+    }
+  })
+}

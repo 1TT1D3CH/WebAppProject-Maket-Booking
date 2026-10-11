@@ -7,7 +7,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, serverTimestamp } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, serverTimestamp, deleteField } from 'firebase/firestore'
 
 let testEnv
 
@@ -395,5 +395,105 @@ describe('ตรวจสลิป: admin/owner ตัดสินการจ�
   test('admin ส่งแจ้งเตือนผลการตรวจถึงผู้เช่าได้', async () => {
     const db = tenant('admin1')
     await assertSucceeds(setDoc(doc(db, 'notifications/n-slip'), { tenantId: 'alice', title: 'อนุมัติการจองแล้ว', type: 'SLIP_REVIEW', isRead: false }))
+  })
+})
+
+describe('ผู้เช่าส่งสลิปใหม่ / ยกเลิกการจองเอง', () => {
+  const SLIP = 'data:image/webp;base64,UklGRg=='
+  // แผง s1 + booking bk1 ของ alice
+  const seed = async (status, stallStatus = 'pending') => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, `${STALL}/s1`), { stallNo: 'A1', x: 10, y: 10, price: 500, status: stallStatus, bookedBy: bookedBy('alice', 'bk1') })
+      await setDoc(doc(db, 'bookings/bk1'), {
+        tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111',
+        amountDue: 500, slipHash: 'old', status, statusReason: 'รูปไม่ชัด'
+      })
+      await setDoc(doc(db, 'bookingSlips/bk1'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10 })
+    })
+  }
+
+  const resubmit = (uid = 'alice', { booking = {}, withSlip = true, slip = {} } = {}) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'bookings/bk1'), {
+      status: 'pending', statusReason: deleteField(), slipHash: 'new',
+      slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...booking
+    })
+    if (withSlip) {
+      batch.set(doc(db, 'bookingSlips/bk1'), { tenantId: uid, marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp(), ...slip })
+    }
+    return batch.commit()
+  }
+
+  const cancel = (uid = 'alice', { releaseStall = true } = {}) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'bookings/bk1'), { status: 'cancelled', updatedAt: serverTimestamp() })
+    if (releaseStall) batch.update(doc(db, `${STALL}/s1`), { status: 'available', bookedBy: null, updatedAt: 'x' })
+    return batch.commit()
+  }
+
+  test('ส่งสลิปใหม่ตอน needs_slip ได้ (booking กลับเป็น pending + เขียนสลิปใหม่)', async () => {
+    await seed('needs_slip')
+    await assertSucceeds(resubmit())
+  })
+
+  test('ส่งสลิปใหม่ตอน pending / approved ไม่ได้', async () => {
+    await seed('pending')
+    await assertFails(resubmit())
+    await testEnv.clearFirestore()
+    await seed('approved', 'booked')
+    await assertFails(resubmit())
+  })
+
+  test('ส่งสลิปใหม่แล้วแก้ amountDue หรือสถานะอื่นไม่ได้', async () => {
+    await seed('needs_slip')
+    await assertFails(resubmit('alice', { booking: { amountDue: 1 } }))
+    await assertFails(resubmit('alice', { booking: { status: 'approved' } }))
+  })
+
+  test('เปลี่ยนสถานะเป็น pending โดยไม่ส่งรูปใหม่ไม่ได้', async () => {
+    await seed('needs_slip')
+    await assertFails(resubmit('alice', { withSlip: false }))
+  })
+
+  test('ส่งสลิปใหม่ของการจองคนอื่นไม่ได้', async () => {
+    await seed('needs_slip')
+    await assertFails(resubmit('bob'))
+  })
+
+  test('รูปสลิปใหม่ที่ไม่ใช่รูปไม่ได้', async () => {
+    await seed('needs_slip')
+    await assertFails(resubmit('alice', { slip: { dataUrl: 'data:text/html;base64,PGI+' } }))
+  })
+
+  test('แก้รูปสลิปเดี่ยว ๆ ตอน pending ไม่ได้', async () => {
+    await seed('pending')
+    await assertFails(setDoc(doc(tenant('alice'), 'bookingSlips/bk1'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() }))
+  })
+
+  test('ยกเลิกตอน pending / needs_slip ได้ (booking cancelled + ปล่อยแผง)', async () => {
+    await seed('pending')
+    await assertSucceeds(cancel())
+    await testEnv.clearFirestore()
+    await seed('needs_slip')
+    await assertSucceeds(cancel())
+  })
+
+  test('ยกเลิกที่ approved แล้วไม่ได้', async () => {
+    await seed('approved', 'booked')
+    await assertFails(cancel())
+  })
+
+  test('ยกเลิก booking ของคนอื่นไม่ได้', async () => {
+    await seed('pending')
+    await assertFails(cancel('bob'))
+  })
+
+  test('ยกเลิก booking โดยไม่ปล่อยแผง หรือปล่อยแผงโดยไม่ยกเลิก booking ไม่ได้', async () => {
+    await seed('pending')
+    await assertFails(cancel('alice', { releaseStall: false }))
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'available', bookedBy: null, updatedAt: 'x' }))
   })
 })

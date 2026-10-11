@@ -8,6 +8,7 @@
       @open-firebase-config="isFirebaseConfigOpen = true"
       @open-auth="isAuthOpen = true"
       @open-notifications="isNotificationsOpen = true"
+      @open-my-bookings="isMyBookingsOpen = true"
     />
 
     <!-- Main Content Area: Switches between Admin Builder & Customer View -->
@@ -88,6 +89,11 @@
       @saved="handleProfileSaved"
     />
 
+    <MyBookingsModal
+      :is-open="isMyBookingsOpen"
+      @close="isMyBookingsOpen = false"
+    />
+
     <NotificationCenter 
       :is-open="isNotificationsOpen"
       @close="isNotificationsOpen = false"
@@ -139,6 +145,8 @@ import NotificationCenter from './components/Auth/NotificationCenter.vue'
 import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
 import MembersPanel from './components/Admin/MembersPanel.vue'
 import SlipReviewPanel from './components/Admin/SlipReviewPanel.vue'
+import MyBookingsModal from './components/Customer/MyBookingsModal.vue'
+import { useMyBookingsStore } from './stores/myBookingsStore'
 import { useSlipReviewStore } from './stores/slipReviewStore'
 
 const marketStore = useMarketStore()
@@ -152,12 +160,14 @@ const isBookingModalOpen = ref(false)
 const isFirebaseConfigOpen = ref(false)
 const isAuthOpen = ref(false)
 const isNotificationsOpen = ref(false)
+const isMyBookingsOpen = ref(false)
 const isChangePasswordOpen = ref(false)
 const isDev = import.meta.env.DEV
 const bookingTargetStall = ref(null)
 
 const notificationStore = useNotificationStore()
 const slipReviewStore = useSlipReviewStore()
+const myBookingsStore = useMyBookingsStore()
 const mustChangePassword = computed(() => authStore.currentUser?.mustChangePassword === true)
 
 onMounted(() => {
@@ -179,6 +189,16 @@ onMounted(() => {
 watch(
   () => [authStore.currentUser?.uid, authStore.isAdmin],
   ([uid, isAdmin]) => notificationStore.initNotificationSync(uid, isAdmin),
+  { immediate: true }
+)
+
+// ผู้ที่ล็อกอินจริงฟังการจองของตัวเอง (ใช้ทำหน้า "การจองของฉัน" และ badge)
+watch(
+  () => [authStore.currentUser?.uid, authStore.isAuthenticated],
+  ([uid, authed]) => {
+    if (uid && authed) myBookingsStore.start(uid)
+    else myBookingsStore.stop()
+  },
   { immediate: true }
 )
 

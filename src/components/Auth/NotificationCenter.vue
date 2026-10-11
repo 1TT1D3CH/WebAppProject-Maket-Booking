@@ -83,6 +83,12 @@
                 ></span>
                 <h4 class="text-xs font-bold text-slate-900 leading-tight">{{ item.title }}</h4>
                 <span 
+                  v-if="item.type === 'SLIP_REVIEW'"
+                  class="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold border border-amber-200 shrink-0"
+                >
+                  ตรวจสลิป
+                </span>
+                <span 
                   v-if="item.type === 'LAYOUT_UPDATE'" 
                   class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-bold border border-indigo-100 shrink-0"
                 >

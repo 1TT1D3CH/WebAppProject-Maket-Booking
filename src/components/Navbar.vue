@@ -98,6 +98,21 @@
             <Moon v-else class="w-4 h-4 text-indigo-600" />
           </button>
 
+          <!-- การจองของฉัน (ผู้ที่ล็อกอินจริง) -->
+          <button
+            v-if="authStore.isAuthenticated"
+            @click="$emit('open-my-bookings')"
+            class="relative p-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl border border-slate-200/80 dark:border-slate-700 shadow-xs transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-1.5 min-h-[36px]"
+            title="การจองของฉัน"
+          >
+            <ClipboardList class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span class="hidden md:inline text-xs font-semibold whitespace-nowrap">การจองของฉัน</span>
+            <span
+              v-if="myBookingsStore.needsSlipCount > 0"
+              class="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-sm"
+            >{{ myBookingsStore.needsSlipCount }}</span>
+          </button>
+
           <!-- Notifications Trigger Button with Badge -->
           <button 
             @click="$emit('open-notifications')"
@@ -249,6 +264,7 @@ import { useMarketStore } from '../stores/marketStore'
 import { useAuthStore } from '../stores/authStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { useSlipReviewStore } from '../stores/slipReviewStore'
+import { useMyBookingsStore } from '../stores/myBookingsStore'
 import { isRealFirebaseConfigured } from '../firebase/config'
 import { 
   LayoutGrid, 
@@ -260,6 +276,7 @@ import {
   Settings,
   Users,
   ReceiptText,
+  ClipboardList,
   Maximize2,
   Bell,
   Sun,
@@ -271,6 +288,7 @@ const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
 const slipReviewStore = useSlipReviewStore()
+const myBookingsStore = useMyBookingsStore()
 
 defineEmits([
   'open-zone-manager', 

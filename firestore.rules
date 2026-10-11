@@ -45,8 +45,21 @@ service cloud.firestore {
       match /stalls/{stallId} {
         allow read: if true;
         allow create, delete: if isAdmin();
-        allow update: if isAdmin() || isTenantBooking();
+        allow update: if isAdmin() || isTenantBooking() || isTenantReleasing();
       }
+    }
+
+    // ผู้เช่ายกเลิกการจองที่ยังรอตรวจ: ปล่อยแผง pending ของตัวเองกลับเป็น available
+    // ต้องยกเลิก booking ในคำสั่งเขียนเดียวกัน (getAfter) กันปล่อยแผงโดยที่ booking ยังอยู่
+    function isTenantReleasing() {
+      return isNotAnonymous()
+        && resource.data.status == 'pending'
+        && resource.data.bookedBy != null
+        && resource.data.bookedBy.tenantId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bookedBy', 'updatedAt'])
+        && request.resource.data.status == 'available'
+        && request.resource.data.bookedBy == null
+        && getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookedBy.bookingId)).data.status == 'cancelled';
     }
 
     // ผู้เช่าจองแผง: ต้องเป็นแผงว่างและเปลี่ยนเป็น pending (รอตรวจสลิป) โดยระบุตัวเองเป็นผู้จองเท่านั้น
@@ -57,6 +70,35 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.bookedBy.keys().hasOnly(['tenantId', 'bookedAt', 'bookingId'])
         && request.resource.data.bookedBy.tenantId == request.auth.uid;
+    }
+
+    // ผู้เช่าส่งสลิปใหม่: needs_slip -> pending แก้ได้แค่ฟิลด์สลิป และต้องเขียนสลิปใหม่ในคำสั่งเดียวกัน
+    function isTenantResubmit(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && r.tenantId == request.auth.uid
+        && r.status == 'needs_slip'
+        && d.status == 'pending'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'slipHash', 'slipUploadedAt', 'updatedAt'])
+        && !('statusReason' in d)
+        && d.slipHash is string
+        && d.slipUploadedAt == request.time
+        && d.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/bookingSlips/$(bookingId)).data.createdAt == request.time;
+    }
+
+    // ผู้เช่ายกเลิกเอง: เฉพาะ pending / needs_slip และแผงต้องถูกปล่อยพร้อมกัน
+    function isTenantCancel() {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && r.tenantId == request.auth.uid
+        && r.status in ['pending', 'needs_slip']
+        && d.status == 'cancelled'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && d.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId)).data.status == 'available';
     }
 
     function isValidDecision(bookingId) {
@@ -95,7 +137,9 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
       // admin/owner ตัดสินได้เฉพาะ pending -> approved / needs_slip / rejected (และ needs_slip -> rejected)
       // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน
-      allow update: if isAdmin() && isValidDecision(bookingId);
+      allow update: if (isAdmin() && isValidDecision(bookingId))
+        || isTenantResubmit(bookingId)
+        || isTenantCancel();
       allow delete: if isAdmin();
     }
 
@@ -111,6 +155,17 @@ service cloud.firestore {
         && request.resource.data.dataUrl.matches('^data:image/(webp|jpeg);base64,.*')
         && request.resource.data.createdAt == request.time
         && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.tenantId == request.auth.uid;
+      // ส่งสลิปใหม่: เจ้าของแก้รูปได้เฉพาะตอน booking เป็น needs_slip และกลับเป็น pending ในคำสั่งเดียวกัน
+      allow update: if isNotAnonymous()
+        && resource.data.tenantId == request.auth.uid
+        && request.resource.data.tenantId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['tenantId', 'marketId', 'dataUrl', 'mime', 'bytes', 'createdAt'])
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() < 750000
+        && request.resource.data.dataUrl.matches('^data:image/(webp|jpeg);base64,.*')
+        && request.resource.data.createdAt == request.time
+        && get(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'needs_slip'
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'pending';
       allow delete: if isAdmin();
     }
 
