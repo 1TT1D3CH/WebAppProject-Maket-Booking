@@ -7,7 +7,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, serverTimestamp, deleteField } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, serverTimestamp, deleteField, runTransaction } from 'firebase/firestore'
 
 let testEnv
 
@@ -544,5 +544,34 @@ describe('เส้นทางเต็มของระบบสลิป (�
     await book()
     await assertSucceeds(updateDoc(doc(tenant('admin1'), `${STALL}/s1`), { x: 55, price: 600 }))
     await assertSucceeds(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { name: 'ตลาดใหม่', updatedAt: 'x' }))
+  })
+})
+
+describe('ส่งสลิปใหม่ด้วย transaction (เหมือนที่แอปใช้จริง)', () => {
+  test('booking ที่ผ่านการขอสลิปใหม่จริง (มี decidedBy/decidedAt/updatedAt) ส่งใหม่ผ่าน transaction ได้', async () => {
+    const SLIP = 'data:image/webp;base64,UklGRg=='
+    // จองจริง -> admin ขอสลิปใหม่จริง (ผ่าน rules ทั้งคู่)
+    const adb = tenant('alice')
+    const b1 = writeBatch(adb)
+    b1.update(doc(adb, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-t'), updatedAt: 'x' })
+    b1.set(doc(adb, 'bookings/bk-t'), {
+      tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111', goodsType: 'ชา',
+      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending'
+    })
+    b1.set(doc(adb, 'bookingSlips/bk-t'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
+    await assertSucceeds(b1.commit())
+    const mdb = tenant('admin1')
+    await assertSucceeds(updateDoc(doc(mdb, 'bookings/bk-t'), {
+      status: 'needs_slip', statusReason: 'ยอดไม่ตรง', decidedBy: 'admin1', decidedAt: serverTimestamp(), updatedAt: serverTimestamp()
+    }))
+
+    const db = tenant('alice')
+    await assertSucceeds(runTransaction(db, async (tx) => {
+      const ref = doc(db, 'bookings/bk-t')
+      const snap = await tx.get(ref)
+      if (snap.data().status !== 'needs_slip') throw new Error('bad status')
+      tx.update(ref, { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp() })
+      tx.set(doc(db, 'bookingSlips/bk-t'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
+    }))
   })
 })

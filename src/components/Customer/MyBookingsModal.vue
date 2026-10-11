@@ -122,9 +122,10 @@ const zoneOf = (b) => {
 }
 
 function errText(err) {
-  if (err?.code === 'permission-denied') return 'ทำรายการไม่ได้ (สถานะอาจเปลี่ยนไปแล้ว) กรุณาลองใหม่'
+  const code = err?.code ? ` [${err.code}]` : ''
+  if (err?.code === 'permission-denied') return `ไม่มีสิทธิ์ทำรายการนี้ (สถานะอาจเปลี่ยนไปแล้ว หรือระบบยังอัปเดตไม่ครบ) กรุณารีเฟรชหน้าแล้วลองใหม่ หากยังไม่ได้ให้แจ้งผู้ดูแล${code}`
   if (err?.code === 'unavailable') return 'เชื่อมต่อไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่'
-  return err?.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่'
+  return (err?.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่') + code
 }
 
 async function toggleSlip(b) {
