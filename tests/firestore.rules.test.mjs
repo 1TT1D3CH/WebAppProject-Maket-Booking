@@ -7,7 +7,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, serverTimestamp } from 'firebase/firestore'
 
 let testEnv
 
@@ -128,16 +128,20 @@ describe('markets/{id}/stalls (แผงรายแผง — C4, C6, B9)', () 
   })
 
   test('tenant จองแผงว่างเป็นชื่อตัวเองได้', async () => {
-    await assertSucceeds(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('alice'), updatedAt: 'x' }))
+    await assertSucceeds(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice'), updatedAt: 'x' }))
+  })
+
+  test('tenant ตั้งสถานะ booked เอง (ข้ามการตรวจสลิป) ไม่ได้', async () => {
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('alice'), updatedAt: 'x' }))
   })
 
   test('tenant จองในชื่อคนอื่นไม่ได้', async () => {
-    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('bob') }))
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('bob') }))
   })
 
   test('tenant แย่งแผงที่ถูกจองแล้ว หรือแผงที่ปิดให้บริการ ไม่ได้', async () => {
-    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s2`), { status: 'booked', bookedBy: bookedBy('alice') }))
-    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s3`), { status: 'booked', bookedBy: bookedBy('alice') }))
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s2`), { status: 'pending', bookedBy: bookedBy('alice') }))
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s3`), { status: 'pending', bookedBy: bookedBy('alice') }))
   })
 
   test('tenant ยกเลิกการจอง (ของตัวเองหรือคนอื่น) ผ่านเอกสารแผงไม่ได้', async () => {
@@ -149,13 +153,13 @@ describe('markets/{id}/stalls (แผงรายแผง — C4, C6, B9)', () 
     const db = tenant('alice')
     await assertFails(updateDoc(doc(db, `${STALL}/s1`), { x: 999 }))
     await assertFails(updateDoc(doc(db, `${STALL}/s1`), { price: 1 }))
-    await assertFails(updateDoc(doc(db, `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('alice'), price: 1 }))
+    await assertFails(updateDoc(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice'), price: 1 }))
     await assertFails(updateDoc(doc(db, `${STALL}/s1`), { status: 'disabled' }))
   })
 
   test('bookedBy ที่ใส่ชื่อ/เบอร์โทรเพิ่มไม่ได้ (กันข้อมูลส่วนตัวรั่วสู่สาธารณะ)', async () => {
     await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), {
-      status: 'booked',
+      status: 'pending',
       bookedBy: { ...bookedBy('alice'), name: 'Alice', phone: '0811111111' }
     }))
   })
@@ -166,8 +170,8 @@ describe('markets/{id}/stalls (แผงรายแผง — C4, C6, B9)', () 
   })
 
   test('anonymous และคนไม่ล็อกอิน จองไม่ได้', async () => {
-    await assertFails(updateDoc(doc(anon(), `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('anon1') }))
-    await assertFails(updateDoc(doc(guest(), `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('x') }))
+    await assertFails(updateDoc(doc(anon(), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('anon1') }))
+    await assertFails(updateDoc(doc(guest(), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('x') }))
   })
 })
 
@@ -215,25 +219,91 @@ describe('bookings (B1, B9)', () => {
     await assertSucceeds(getDoc(doc(tenant('admin1'), 'bookings/b1')))
   })
 
-  test('batch เดียวที่จองแผง + สร้างรายการจอง (เหมือน transaction) สำเร็จ', async () => {
-    const db = tenant('alice')
+  const SLIP = 'data:image/webp;base64,UklGRg=='
+  const newBooking = (over = {}) => ({
+    tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111',
+    goodsType: 'ชา', amountDue: 500, slipHash: 'abc123', slipUploadedAt: serverTimestamp(),
+    createdAt: serverTimestamp(), status: 'pending', ...over
+  })
+  const slipDoc = (over = {}) => ({
+    tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10,
+    createdAt: serverTimestamp(), ...over
+  })
+  // จอง = แผง + booking + สลิป ใน batch เดียว (เหมือน transaction ในแอป)
+  const bookBatch = ({ uid = 'alice', stallId = 's1', id = 'bk-new', booking = {}, slip = {}, withSlip = true, stallStatus = 'pending' } = {}) => {
+    const db = tenant(uid)
     const batch = writeBatch(db)
-    batch.update(doc(db, `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('alice', 'bk-new'), updatedAt: 'x' })
-    batch.set(doc(db, 'bookings/bk-new'), { tenantId: 'alice', stallId: 's1', customerName: 'Alice', customerPhone: '0811111111', status: 'confirmed' })
-    await assertSucceeds(batch.commit())
+    batch.update(doc(db, `${STALL}/${stallId}`), { status: stallStatus, bookedBy: bookedBy(uid, id), updatedAt: 'x' })
+    batch.set(doc(db, `bookings/${id}`), newBooking({ tenantId: uid, stallId, ...booking }))
+    if (withSlip) batch.set(doc(db, `bookingSlips/${id}`), slipDoc({ tenantId: uid, ...slip }))
+    return batch.commit()
+  }
+
+  test('จองพร้อมแนบสลิป (แผง pending + booking pending + สลิป) สำเร็จ', async () => {
+    await assertSucceeds(bookBatch())
+  })
+
+  test('จองโดยไม่มีสลิปไม่ได้', async () => {
+    await assertFails(bookBatch({ withSlip: false }))
+  })
+
+  test('ตั้ง booking เป็น approved/confirmed เองไม่ได้', async () => {
+    await assertFails(bookBatch({ booking: { status: 'approved' } }))
+    await assertFails(bookBatch({ booking: { status: 'confirmed' } }))
+  })
+
+  test('ตั้งแผงเป็น booked เองไม่ได้', async () => {
+    await assertFails(bookBatch({ stallStatus: 'booked' }))
+  })
+
+  test('ปลอม amountDue ไม่ได้', async () => {
+    await assertFails(bookBatch({ booking: { amountDue: 1 } }))
+  })
+
+  test('booking มีฟิลด์แปลกปลอมเพิ่มไม่ได้', async () => {
+    await assertFails(bookBatch({ booking: { decidedBy: 'alice' } }))
+  })
+
+  test('สองบัญชีจองแผงเดียวกัน ผ่านได้บัญชีเดียว', async () => {
+    await assertSucceeds(bookBatch({ uid: 'alice', id: 'bk-a' }))
+    await assertFails(bookBatch({ uid: 'bob', id: 'bk-b' }))
+  })
+
+  test('สลิปที่ไม่ใช่รูป หรือใหญ่เกินไป ไม่ได้', async () => {
+    await assertFails(bookBatch({ slip: { dataUrl: 'data:text/html;base64,PGI+' } }))
+    await assertFails(bookBatch({ slip: { dataUrl: 'data:image/webp;base64,' + 'A'.repeat(750000) } }))
+  })
+
+  test('สลิปที่ระบุเจ้าของเป็นคนอื่นไม่ได้', async () => {
+    await assertFails(bookBatch({ slip: { tenantId: 'bob' } }))
+  })
+
+  test('บัญชีอื่นอ่านสลิปเราไม่ได้ แต่เจ้าของและ admin อ่านได้', async () => {
+    await assertSucceeds(bookBatch())
+    await assertFails(getDoc(doc(tenant('bob'), 'bookingSlips/bk-new')))
+    await assertFails(getDoc(doc(guest(), 'bookingSlips/bk-new')))
+    await assertSucceeds(getDoc(doc(tenant('alice'), 'bookingSlips/bk-new')))
+    await assertSucceeds(getDoc(doc(tenant('admin1'), 'bookingSlips/bk-new')))
+  })
+
+  test('tenant แก้/ลบสลิปไม่ได้ แต่ admin ลบได้', async () => {
+    await assertSucceeds(bookBatch())
+    await assertFails(updateDoc(doc(tenant('alice'), 'bookingSlips/bk-new'), { bytes: 1 }))
+    await assertFails(deleteDoc(doc(tenant('alice'), 'bookingSlips/bk-new')))
+    await assertSucceeds(deleteDoc(doc(tenant('admin1'), 'bookingSlips/bk-new')))
   })
 
   test('สร้างรายการจองเดี่ยว ๆ โดยแผงไม่ได้ถูกจองในชื่อตัวเอง ไม่ได้', async () => {
-    await assertFails(setDoc(doc(tenant('alice'), 'bookings/b4'), { tenantId: 'alice', stallId: 's1' }))
+    await assertFails(setDoc(doc(tenant('alice'), 'bookings/b4'), newBooking()))
   })
 
   test('จองในชื่อคนอื่น และ anonymous จองไม่ได้', async () => {
     const db = tenant('alice')
     const batch = writeBatch(db)
-    batch.update(doc(db, `${STALL}/s1`), { status: 'booked', bookedBy: bookedBy('alice', 'bk-x') })
-    batch.set(doc(db, 'bookings/bk-x'), { tenantId: 'bob', stallId: 's1' })
+    batch.update(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-x') })
+    batch.set(doc(db, 'bookings/bk-x'), newBooking({ tenantId: 'bob' }))
     await assertFails(batch.commit())
-    await assertFails(setDoc(doc(anon(), 'bookings/b3'), { tenantId: 'anon1', stallId: 's1' }))
+    await assertFails(setDoc(doc(anon(), 'bookings/b3'), newBooking({ tenantId: 'anon1' })))
   })
 
   test('tenant แก้/ลบรายการจองไม่ได้ แต่ admin ทำได้', async () => {

@@ -144,6 +144,10 @@
             <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
             <span>ว่าง: <strong class="font-mono font-bold text-emerald-700 dark:text-emerald-400">{{ marketStore.stats.available }}</strong></span>
           </div>
+          <div v-if="marketStore.stats.pending" class="flex items-center gap-1.5 bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-800 shadow-xs">
+            <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+            <span>รอตรวจ: <strong class="font-mono font-bold">{{ marketStore.stats.pending }}</strong></span>
+          </div>
           <div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 px-2.5 py-1 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-xs">
             <span class="w-2 h-2 rounded-full bg-slate-400"></span>
             <span>จองแล้ว: <strong class="font-mono font-bold text-slate-700 dark:text-slate-300">{{ marketStore.stats.booked }}</strong></span>

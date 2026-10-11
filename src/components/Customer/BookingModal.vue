@@ -110,33 +110,39 @@
 
           <!-- Payment Slip Upload & Preview -->
           <div class="pt-2">
-            <label class="block text-xs font-semibold text-slate-800 mb-1.5 flex items-center justify-between">
-              <span>💳 แนบหลักฐานสลิปโอนเงินค่าเช่า (฿{{ stall.price }}) *</span>
-              <span class="text-[10px] text-slate-500 font-mono">PromptPay: 081-999-8888</span>
+            <div class="rounded-2xl bg-indigo-50 border border-indigo-200/80 p-3 mb-2 text-center">
+              <div class="text-[11px] text-indigo-700 font-semibold">ยอดที่ต้องโอน</div>
+              <div class="text-2xl font-bold font-mono text-indigo-900">฿{{ stall.price }}</div>
+              <div class="text-[11px] text-slate-600 font-mono mt-0.5">PromptPay: 081-999-8888</div>
+            </div>
+            <label class="block text-xs font-semibold text-slate-800 mb-1.5">
+              💳 แนบสลิปโอนเงินค่าเช่า *
             </label>
 
             <div 
               class="border-2 border-dashed rounded-2xl p-3 text-center transition cursor-pointer relative"
               :class="slipPreview ? 'border-emerald-500/60 bg-emerald-50/50' : 'border-slate-300 hover:border-indigo-400 bg-slate-50'"
-              @click="$refs.fileInput.click()"
+              @click="!compressing && $refs.fileInput.click()"
             >
               <input 
                 ref="fileInput"
                 type="file" 
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 class="hidden" 
                 @change="handleFileUpload"
               />
 
-              <div v-if="slipPreview" class="flex flex-col items-center gap-2">
+              <div v-if="compressing" class="py-6 text-xs font-medium text-slate-500">กำลังย่อรูปสลิป...</div>
+
+              <div v-else-if="slipPreview" class="flex flex-col items-center gap-2">
                 <img :src="slipPreview" alt="Slip Preview" class="max-h-36 rounded-lg object-contain border border-slate-200 shadow-xs" />
-                <span class="text-xs text-emerald-700 font-semibold">✓ แนบสลิปเรียบร้อยแล้ว (คลิกเพื่อเปลี่ยน)</span>
+                <span class="text-xs text-emerald-700 font-semibold">✓ แนบสลิปเรียบร้อยแล้ว (แตะเพื่อเปลี่ยนรูป)</span>
               </div>
 
               <div v-else class="py-3 flex flex-col items-center gap-1.5 text-slate-500">
                 <UploadCloud class="w-6 h-6 text-indigo-600" />
-                <span class="text-xs font-medium">อัปโหลดสลิปการชำระเงิน (คลิกเพื่อเลือกไฟล์)</span>
-                <span class="text-[10px] text-slate-400">รองรับไฟล์ภาพ JPG, PNG, WEBP</span>
+                <span class="text-xs font-medium">แตะเพื่อถ่ายรูปหรือเลือกสลิปจากคลังภาพ</span>
+                <span class="text-[10px] text-slate-400">รองรับ JPG, PNG, WebP (iPhone: แคปหน้าจอสลิปแทนไฟล์ HEIC)</span>
               </div>
             </div>
           </div>
@@ -153,7 +159,7 @@
         <div class="bg-indigo-50 border border-indigo-200/80 rounded-xl p-2.5 flex items-start gap-2 text-[11px] text-indigo-900 font-medium">
           <ShieldCheck class="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
           <p>
-            ระบบจองแผงใช้ Firestore Atomic Transaction ป้องกัน Race Condition เมื่อยืนยันการจอง สิทธิ์จะถูกล็อกแบบ Real-time ทันที
+            หลังส่งสลิป แผงจะถูกกันไว้ให้คุณระหว่างรอผู้ดูแลตรวจสลิป ติดตามผลได้ภายหลัง
           </p>
         </div>
 
@@ -170,10 +176,11 @@
       <button
         type="submit"
         form="booking-form"
-        class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-sm transition inline-flex items-center gap-1.5 active:scale-95"
+        :disabled="compressing || submitting"
+        class="disabled:opacity-60 disabled:cursor-not-allowed px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-sm transition inline-flex items-center gap-1.5 active:scale-95"
       >
         <CheckCircle class="w-4 h-4" />
-        <span>ยืนยันชำระเงินและจองแผง</span>
+        <span>{{ submitting ? 'กำลังส่ง...' : 'ส่งสลิปและจองแผง' }}</span>
       </button>
     </template>
   </BaseModal>
@@ -184,6 +191,7 @@ import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { useAuthStore } from '../../stores/authStore'
 import BaseModal from '../ui/BaseModal.vue'
+import { compressSlipImage } from '../../utils/compressImage'
 import { ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -196,6 +204,9 @@ const marketStore = useMarketStore()
 const authStore = useAuthStore()
 
 const slipPreview = ref('')
+const slipData = ref(null)
+const compressing = ref(false)
+const submitting = ref(false)
 const validationError = ref('')
 
 const customer = ref({
@@ -214,6 +225,7 @@ watch(() => authStore.currentUser, (user) => {
     // logout: ไม่ให้ข้อมูลของผู้ใช้เดิมค้างในฟอร์ม
     customer.value = { name: '', phone: '', citizenId: '', goodsType: '' }
     slipPreview.value = ''
+    slipData.value = null
   }
 }, { immediate: true })
 
@@ -221,14 +233,24 @@ const stallMetrics = computed(() => {
   return marketStore.getStallMetrics(props.stall)
 })
 
-function handleFileUpload(e) {
-  const file = e.target.files[0]
-  if (file) {
-    const reader = new FileReader()
-    reader.onload = (evt) => {
-      slipPreview.value = evt.target.result
-    }
-    reader.readAsDataURL(file)
+async function handleFileUpload(e) {
+  const input = e.target
+  const file = input.files[0]
+  input.value = '' // เลือกไฟล์เดิมซ้ำได้
+  if (!file) return
+  validationError.value = ''
+  compressing.value = true
+  try {
+    const slip = await compressSlipImage(file)
+    slipData.value = slip
+    slipPreview.value = slip.dataUrl
+  } catch (err) {
+    console.error('Compress slip error:', err)
+    slipData.value = null
+    slipPreview.value = ''
+    validationError.value = err.message || 'อ่านรูปสลิปไม่ได้ กรุณาลองรูปอื่น'
+  } finally {
+    compressing.value = false
   }
 }
 
@@ -261,7 +283,7 @@ async function submitBooking() {
     return
   }
 
-  if (!slipPreview.value) {
+  if (!slipData.value) {
     validationError.value = 'กรุณาอัปโหลดสลิปหลักฐานการโอนเงิน'
     return
   }
@@ -271,13 +293,19 @@ async function submitBooking() {
   const bookingPayload = {
     ...customer.value,
     tenantId: authStore.currentUser?.uid,
-    slipUrl: slipPreview.value
+    slip: slipData.value
   }
 
-  const success = await marketStore.bookStall(props.stall.id, bookingPayload)
-  if (success) {
-    slipPreview.value = ''
-    emit('close')
+  submitting.value = true
+  try {
+    const success = await marketStore.bookStall(props.stall.id, bookingPayload)
+    if (success) {
+      slipPreview.value = ''
+      slipData.value = null
+      emit('close')
+    }
+  } finally {
+    submitting.value = false
   }
 }
 </script>

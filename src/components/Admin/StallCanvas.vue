@@ -183,6 +183,7 @@
               class="text-[10px] px-2 py-0.5 rounded-full font-bold border shadow-xs transition-colors"
               :class="{
                 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800': stall.status === 'available',
+                'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700': stall.status === 'pending',
                 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700': stall.status === 'booked',
                 'bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800': stall.status === 'disabled'
               }"
@@ -374,6 +375,7 @@ function getStallStatusClasses(stall) {
 function getStatusLabel(status) {
   switch (status) {
     case 'available': return 'ว่าง'
+    case 'pending': return 'รอตรวจสลิป'
     case 'booked': return 'จองแล้ว'
     case 'disabled': return 'ปิดบริการ'
     default: return status

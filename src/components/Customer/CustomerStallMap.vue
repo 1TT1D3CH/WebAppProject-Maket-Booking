@@ -86,6 +86,10 @@
             <span class="font-semibold">ว่าง (แตะเพื่อจอง)</span>
           </div>
           <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-lg bg-amber-100 dark:bg-amber-950 border border-amber-300 dark:border-amber-700"></span>
+            <span class="font-medium">รอตรวจสลิป</span>
+          </div>
+          <div class="flex items-center gap-1.5">
             <span class="w-3 h-3 rounded-lg bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"></span>
             <span class="font-medium">ถูกจองแล้ว</span>
           </div>
@@ -190,6 +194,9 @@
             >
               จองแผง <ChevronRight class="w-3 h-3" />
             </span>
+            <span v-else-if="stall.status === 'pending'" class="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+              รอตรวจสลิป
+            </span>
             <span v-else-if="stall.status === 'booked'" class="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">
               จองแล้ว
             </span>
@@ -253,7 +260,7 @@
           </button>
 
           <span v-else class="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-medium">
-            แผงนี้ไม่สามารถจองได้ ({{ selectedStall.status === 'booked' ? 'มีผู้จองแล้ว' : 'ปิดใช้งาน' }})
+            แผงนี้ไม่สามารถจองได้ ({{ selectedStall.status === 'booked' ? 'มีผู้จองแล้ว' : selectedStall.status === 'pending' ? 'รอตรวจสลิป' : 'ปิดใช้งาน' }})
           </span>
         </div>
 
@@ -303,6 +310,9 @@ function showFacilityToast(obj) {
 }
 
 function getCustomerStallClasses(stall) {
+  if (stall.status === 'pending') {
+    return 'bg-amber-50/90 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border-amber-300 dark:border-amber-700 cursor-not-allowed'
+  }
   if (stall.status === 'booked') {
     return 'bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 opacity-75 cursor-not-allowed'
   }

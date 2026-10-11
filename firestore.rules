@@ -40,6 +40,7 @@ service cloud.firestore {
       // - อ่าน: ทุกคน (ไม่มีข้อมูลส่วนบุคคล; bookedBy มีแค่ tenantId/bookedAt/bookingId)
       // - สร้าง/ลบ/แก้ผัง (ตำแหน่ง ราคา สถานะ ฯลฯ): owner/admin เท่านั้น
       // - ผู้เช่าที่ล็อกอินจริง: จองแผงว่างเป็นชื่อตัวเองเท่านั้น (available -> booked)
+      //   (available -> pending รอตรวจสลิป; booked ตั้งได้เฉพาะ admin หลังอนุมัติ)
       //   แก้ได้แค่ status/bookedBy/updatedAt จึงแก้ตำแหน่ง ราคา หรือแย่งแผงที่ถูกจองแล้วไม่ได้
       match /stalls/{stallId} {
         allow read: if true;
@@ -48,12 +49,12 @@ service cloud.firestore {
       }
     }
 
-    // ผู้เช่าจองแผง: ต้องเป็นแผงว่างและเปลี่ยนเป็น booked โดยระบุตัวเองเป็นผู้จองเท่านั้น
+    // ผู้เช่าจองแผง: ต้องเป็นแผงว่างและเปลี่ยนเป็น pending (รอตรวจสลิป) โดยระบุตัวเองเป็นผู้จองเท่านั้น
     function isTenantBooking() {
       return isNotAnonymous()
         && resource.data.status == 'available'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bookedBy', 'updatedAt'])
-        && request.resource.data.status == 'booked'
+        && request.resource.data.status == 'pending'
         && request.resource.data.bookedBy.keys().hasOnly(['tenantId', 'bookedAt', 'bookingId'])
         && request.resource.data.bookedBy.tenantId == request.auth.uid;
     }
@@ -67,8 +68,33 @@ service cloud.firestore {
         && request.resource.data.tenantId == request.auth.uid
         && request.resource.data.stallId is string
         && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.tenantId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.bookingId == bookingId;
+        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.bookingId == bookingId
+        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.status == 'pending'
+        // การจองใหม่ต้องรอตรวจสลิป ยอดต้องตรงราคาแผงจริง และต้องแนบสลิปในคำสั่งเขียนเดียวกัน
+        && request.resource.data.status == 'pending'
+        && request.resource.data.amountDue == getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.price
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.slipUploadedAt == request.time
+        && request.resource.data.slipHash is string
+        && request.resource.data.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone',
+             'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status'])
+        && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
       allow update, delete: if isAdmin();
+    }
+
+    // ─── Booking Slips (รูปสลิป แยกจาก bookings เพื่อไม่ให้รายการจองหนัก) ───────
+    // อ่านได้เฉพาะเจ้าของและ admin; สร้างได้พร้อมการจองของตัวเองเท่านั้น; ลบ: admin
+    match /bookingSlips/{bookingId} {
+      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
+      allow create: if isNotAnonymous()
+        && request.resource.data.tenantId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['tenantId', 'marketId', 'dataUrl', 'mime', 'bytes', 'createdAt'])
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() < 750000
+        && request.resource.data.dataUrl.matches('^data:image/(webp|jpeg);base64,.*')
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.tenantId == request.auth.uid;
+      allow delete: if isAdmin();
     }
 
     // ─── Users ───────────────────────────────────────────────────────────────

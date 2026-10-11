@@ -102,11 +102,12 @@ export const useMarketStore = defineStore('market', {
       const total = state.stalls.length
       const available = state.stalls.filter(s => s.status === 'available').length
       const booked = state.stalls.filter(s => s.status === 'booked').length
+      const pending = state.stalls.filter(s => s.status === 'pending').length
       const disabled = state.stalls.filter(s => s.status === 'disabled').length
       const totalRevenue = state.stalls
         .filter(s => s.status === 'booked')
         .reduce((sum, s) => sum + (s.price || 0), 0)
-      return { total, available, booked, disabled, totalRevenue }
+      return { total, available, booked, pending, disabled, totalRevenue }
     }
   },
 
@@ -564,7 +565,7 @@ export const useMarketStore = defineStore('market', {
       const stall = this.stalls.find(s => s.id === stallId)
       if (!stall) return false
 
-      if (stall.status === 'booked') {
+      if (stall.status === 'booked' || stall.status === 'pending') {
         this.showNotification(`แผงค้า ${stall.stallNo} ถูกจองไปแล้ว!`, 'error')
         return false
       }
@@ -578,14 +579,14 @@ export const useMarketStore = defineStore('market', {
         const res = await bookStallWithTransaction(stallId, customerInfo)
 
         // เก็บเฉพาะ id ในเอกสารแผง (ชื่อ/เบอร์โทรอยู่ใน bookings) และไม่นับเป็นการแก้ของ admin
-        stall.status = 'booked'
+        stall.status = 'pending'
         stall.bookedBy = res.bookedBy
         if (this.initialStallsState[stallId]) {
-          this.initialStallsState[stallId] = { ...this.initialStallsState[stallId], status: 'booked', bookedBy: res.bookedBy }
+          this.initialStallsState[stallId] = { ...this.initialStallsState[stallId], status: 'pending', bookedBy: res.bookedBy }
         }
         this.persistToLocal()
 
-        this.showNotification(`จองแผงค้า ${stall.stallNo} สำเร็จแล้ว!`, 'success')
+        this.showNotification(`ส่งการจองแผง ${stall.stallNo} แล้ว รอผู้ดูแลตรวจสลิป`, 'success')
         return true
       } catch (err) {
         console.error('Booking Error:', err)

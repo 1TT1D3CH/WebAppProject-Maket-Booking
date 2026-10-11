@@ -11,6 +11,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore'
 import { toPublicBookedBy } from '../utils/stallSync'
+import { slipRef, buildSlipDoc } from './slipStorage'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
@@ -138,8 +139,10 @@ export async function saveMarketLayoutToFirestore(marketName, zones, dimensions 
 }
 
 /**
- * จองแผงด้วย transaction: เปลี่ยนเฉพาะสถานะของแผงนั้น + สร้างรายการจองในครั้งเดียว
- * rules ฝั่งเซิร์ฟเวอร์บังคับว่าผู้เช่าเปลี่ยนได้แค่ available -> booked ของตัวเอง
+ * จองแผงด้วย transaction: เปลี่ยนเฉพาะสถานะของแผงนั้นเป็น 'pending' (รอตรวจสลิป)
+ * + สร้างรายการจอง + เก็บรูปสลิป ในครั้งเดียว ล้มส่วนใดส่วนหนึ่งจะไม่มีอะไรค้าง
+ * rules ฝั่งเซิร์ฟเวอร์บังคับว่าผู้เช่าเปลี่ยนได้แค่ available -> pending ของตัวเอง
+ * customerInfo.slip = { dataUrl, mime, bytes, hash }
  * (ไม่แตะ zones/ชื่อผัง/แผงอื่น — C6)
  */
 export async function bookStallWithTransaction(stallId, customerInfo) {
@@ -148,6 +151,9 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
   }
   if (!customerInfo?.tenantId) {
     throw new Error('กรุณาเข้าสู่ระบบก่อนจอง')
+  }
+  if (!customerInfo.slip?.dataUrl) {
+    throw new Error('กรุณาแนบสลิปการโอนเงินก่อนจอง')
   }
 
   const stallRef = doc(stallsCol(), stallId)
@@ -160,8 +166,8 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
     }
 
     const stall = stallDoc.data()
-    if (stall.status === 'booked') {
-      throw new Error(`แผงค้า ${stall.stallNo} ถูกผู้อื่นจองไปก่อนหน้านี้แล้ว!`)
+    if (stall.status === 'booked' || stall.status === 'pending') {
+      throw new Error(`แผงค้า ${stall.stallNo} ถูกผู้อื่นจองไว้ก่อนหน้านี้แล้ว!`)
     }
     if (stall.status === 'disabled') {
       throw new Error(`แผงค้า ${stall.stallNo} ปิดให้บริการ ไม่สามารถจองได้`)
@@ -173,7 +179,7 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
       bookingId: bookingRef.id
     })
 
-    transaction.update(stallRef, { status: 'booked', bookedBy, updatedAt: new Date().toISOString() })
+    transaction.update(stallRef, { status: 'pending', bookedBy, updatedAt: new Date().toISOString() })
     transaction.set(bookingRef, {
       stallId,
       stallNo: stall.stallNo || null,
@@ -181,9 +187,20 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
       customerName: customerInfo.name,
       customerPhone: customerInfo.phone,
       goodsType: customerInfo.goodsType || '',
+      amountDue: stall.price,
+      slipHash: customerInfo.slip.hash,
+      slipUploadedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
-      status: 'confirmed'
+      status: 'pending'
     })
+    transaction.set(slipRef(bookingRef.id), buildSlipDoc({
+      tenantId: customerInfo.tenantId,
+      marketId: MARKET_ID,
+      dataUrl: customerInfo.slip.dataUrl,
+      mime: customerInfo.slip.mime,
+      bytes: customerInfo.slip.bytes,
+      createdAt: serverTimestamp()
+    }))
   })
 
   const snap = await getDoc(stallRef)
