@@ -14,7 +14,7 @@ import {
   limit,
   serverTimestamp
 } from 'firebase/firestore'
-import { toPublicBookedBy } from '../utils/stallSync'
+import { toPublicBookedBy, PUBLIC_TEXT_MAX } from '../utils/stallSync'
 import { slipRef, buildSlipDoc } from './slipStorage'
 import { keepAlive } from '../utils/keepAlive'
 
@@ -184,7 +184,9 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
     const bookedBy = toPublicBookedBy({
       tenantId: customerInfo.tenantId,
       bookedAt: new Date().toISOString(),
-      bookingId: bookingRef.id
+      bookingId: bookingRef.id,
+      shopName: customerInfo.shopName,
+      goodsType: customerInfo.goodsType
     })
 
     transaction.update(stallRef, { status: 'pending', bookedBy, updatedAt: new Date().toISOString() })
@@ -194,7 +196,8 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
       tenantId: customerInfo.tenantId,
       customerName: customerInfo.name,
       customerPhone: customerInfo.phone,
-      goodsType: customerInfo.goodsType || '',
+      shopName: (customerInfo.shopName || '').trim().slice(0, PUBLIC_TEXT_MAX),
+      goodsType: (customerInfo.goodsType || '').trim().slice(0, PUBLIC_TEXT_MAX),
       amountDue: stall.price,
       slipHash: customerInfo.slip.hash,
       slipUploadedAt: serverTimestamp(),

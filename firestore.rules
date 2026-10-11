@@ -37,7 +37,7 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
 
       // แผงค้ารายแผง
-      // - อ่าน: ทุกคน (ไม่มีข้อมูลส่วนบุคคล; bookedBy มีแค่ tenantId/bookedAt/bookingId)
+      // - อ่าน: ทุกคน (ไม่มีข้อมูลส่วนบุคคล; bookedBy มี tenantId/bookedAt/bookingId + ชื่อร้าน/ประเภทสินค้า ไม่มีชื่อจริง/เบอร์โทร)
       // - สร้าง/ลบ/แก้ผัง (ตำแหน่ง ราคา สถานะ ฯลฯ): owner/admin เท่านั้น
       // - ผู้เช่าที่ล็อกอินจริง: จองแผงว่างเป็นชื่อตัวเองเท่านั้น (available -> booked)
       //   (available -> pending รอตรวจสลิป; booked ตั้งได้เฉพาะ admin หลังอนุมัติ)
@@ -68,8 +68,13 @@ service cloud.firestore {
         && resource.data.status == 'available'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bookedBy', 'updatedAt'])
         && request.resource.data.status == 'pending'
-        && request.resource.data.bookedBy.keys().hasOnly(['tenantId', 'bookedAt', 'bookingId'])
-        && request.resource.data.bookedBy.tenantId == request.auth.uid;
+        && request.resource.data.bookedBy.keys().hasOnly(['tenantId', 'bookedAt', 'bookingId', 'shopName', 'goodsType'])
+        && request.resource.data.bookedBy.tenantId == request.auth.uid
+        // สำเนาข้อมูลสาธารณะ (ชื่อร้าน/ประเภทสินค้า) เป็นข้อความสั้นเท่านั้น ห้ามใส่ข้อมูลส่วนตัว
+        && (!('shopName' in request.resource.data.bookedBy)
+            || (request.resource.data.bookedBy.shopName is string && request.resource.data.bookedBy.shopName.size() <= 60))
+        && (!('goodsType' in request.resource.data.bookedBy)
+            || (request.resource.data.bookedBy.goodsType is string && request.resource.data.bookedBy.goodsType.size() <= 60));
     }
 
     // ผู้เช่าส่งสลิปใหม่: needs_slip -> pending แก้ได้แค่ฟิลด์สลิป และต้องเขียนสลิปใหม่ในคำสั่งเดียวกัน
@@ -133,7 +138,7 @@ service cloud.firestore {
         && request.resource.data.slipUploadedAt == request.time
         && request.resource.data.slipHash is string
         && request.resource.data.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone',
-             'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status'])
+             'shopName', 'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status'])
         && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
       // admin/owner ตัดสินได้เฉพาะ pending -> approved / needs_slip / rejected (และ needs_slip -> rejected)
       // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน

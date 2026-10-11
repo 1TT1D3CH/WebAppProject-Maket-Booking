@@ -32,13 +32,13 @@
           <div class="flex items-center gap-3">
             <div 
               class="w-12 h-12 rounded-xl flex items-center justify-center font-mono font-bold text-white text-lg shadow-md"
-              :style="{ backgroundColor: marketStore.getZoneById(stall.zoneId)?.color }"
+              :style="{ backgroundColor: marketStore.pubZoneById(stall.zoneId)?.color }"
             >
               {{ stall.stallNo }}
             </div>
             <div>
               <div class="font-bold text-slate-900 text-base">แผงค้า {{ stall.stallNo }}</div>
-              <div class="text-xs text-slate-500 font-medium">{{ marketStore.getZoneById(stall.zoneId)?.name }}</div>
+              <div class="text-xs text-slate-500 font-medium">{{ marketStore.pubZoneById(stall.zoneId)?.name }}</div>
               <div class="text-xs text-indigo-600 font-mono font-semibold mt-0.5">
                 ขนาด: {{ stallMetrics.widthM }} x {{ stallMetrics.heightM }} เมตร ({{ stallMetrics.areaSqM }} ตร.ม.)
               </div>
@@ -97,11 +97,25 @@
 
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">
+              ชื่อร้าน (ไม่บังคับ — แสดงให้ลูกค้าคนอื่นเห็นบนผัง)
+            </label>
+            <input
+              v-model="customer.shopName"
+              type="text"
+              maxlength="60"
+              placeholder="เช่น ข้าวมันไก่ป้าแดง"
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">
               ประเภทสินค้า / สินค้าที่จะนำมาขาย *
             </label>
             <input 
               v-model="customer.goodsType"
               required
+              maxlength="60"
               type="text"
               placeholder="เช่น ชาชงสด, ขนมปังปิ้ง, เสื้อผ้าแฟชั่น"
               class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
@@ -213,6 +227,7 @@ const customer = ref({
   name: '',
   phone: '',
   citizenId: '',
+  shopName: '',
   goodsType: ''
 })
 
@@ -223,7 +238,7 @@ watch(() => authStore.currentUser, (user) => {
     customer.value.citizenId = user.citizenId || customer.value.citizenId
   } else {
     // logout: ไม่ให้ข้อมูลของผู้ใช้เดิมค้างในฟอร์ม
-    customer.value = { name: '', phone: '', citizenId: '', goodsType: '' }
+    customer.value = { name: '', phone: '', citizenId: '', shopName: '', goodsType: '' }
     slipPreview.value = ''
     slipData.value = null
   }

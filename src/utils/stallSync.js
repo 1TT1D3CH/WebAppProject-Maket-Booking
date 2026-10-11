@@ -4,9 +4,14 @@
 /** ฟิลด์ผังที่ admin แก้ได้ */
 export const LAYOUT_FIELDS = ['stallNo', 'zoneId', 'x', 'y', 'width', 'height', 'price', 'notes']
 
+/** ความยาวสูงสุดของข้อความสาธารณะ (ชื่อร้าน/ประเภทสินค้า) ต้องตรงกับ firestore.rules */
+export const PUBLIC_TEXT_MAX = 60
+
+const publicText = (v) => (typeof v === 'string' ? v.trim().slice(0, PUBLIC_TEXT_MAX) : '')
+
 /**
- * bookedBy ที่เก็บในเอกสารแผง (อ่านได้สาธารณะ) มีแค่ id ห้ามมีชื่อ/เบอร์โทร
- * รายละเอียดผู้จองอยู่ใน bookings/{bookingId} ซึ่งอ่านได้เฉพาะเจ้าของและ admin
+ * bookedBy ที่เก็บในเอกสารแผง (อ่านได้สาธารณะ) มี id + ชื่อร้าน + ประเภทสินค้า (ให้ลูกค้าอื่นดูว่าแผงนี้ขายอะไร)
+ * ห้ามมีชื่อจริง/เบอร์โทร/เลขบัตร — รายละเอียดผู้จองอยู่ใน bookings/{bookingId} ซึ่งอ่านได้เฉพาะเจ้าของและ admin
  */
 export function toPublicBookedBy(bookedBy) {
   if (!bookedBy) return null
@@ -15,6 +20,10 @@ export function toPublicBookedBy(bookedBy) {
     bookedAt: bookedBy.bookedAt || null
   }
   if (bookedBy.bookingId) out.bookingId = bookedBy.bookingId
+  const shopName = publicText(bookedBy.shopName)
+  const goodsType = publicText(bookedBy.goodsType)
+  if (shopName) out.shopName = shopName
+  if (goodsType) out.goodsType = goodsType
   return out
 }
 

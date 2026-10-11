@@ -9,11 +9,15 @@ const stall = (id, over = {}) => ({
 const snapshot = (...stalls) => Object.fromEntries(stalls.map(s => [s.id, JSON.parse(JSON.stringify(s))]))
 
 describe('toPublicBookedBy (B9)', () => {
-  test('เก็บแค่ tenantId/bookedAt/bookingId ตัดชื่อและเบอร์โทร', () => {
+  test('เก็บ id + ชื่อร้าน/ประเภทสินค้า ตัดชื่อจริง เบอร์โทร เลขบัตร', () => {
     assert.deepEqual(
-      toPublicBookedBy({ tenantId: 't1', bookedAt: 'x', bookingId: 'b1', name: 'A', phone: '081', goodsType: 'g' }),
-      { tenantId: 't1', bookedAt: 'x', bookingId: 'b1' }
+      toPublicBookedBy({ tenantId: 't1', bookedAt: 'x', bookingId: 'b1', name: 'A', phone: '081', citizenId: '1', customerName: 'N', shopName: ' ร้านป้าแดง ', goodsType: 'ข้าวมันไก่' }),
+      { tenantId: 't1', bookedAt: 'x', bookingId: 'b1', shopName: 'ร้านป้าแดง', goodsType: 'ข้าวมันไก่' }
     )
+  })
+  test('ไม่ใส่ฟิลด์ชื่อร้าน/สินค้าถ้าว่าง และตัดความยาวไม่เกิน 60', () => {
+    assert.deepEqual(toPublicBookedBy({ tenantId: 't1', bookedAt: 'x', shopName: '  ', goodsType: 5 }), { tenantId: 't1', bookedAt: 'x' })
+    assert.equal(toPublicBookedBy({ tenantId: 't1', shopName: 'ก'.repeat(100) }).shopName.length, 60)
   })
   test('null เมื่อไม่มีผู้จอง และรองรับฟิลด์ uid แบบเก่า', () => {
     assert.equal(toPublicBookedBy(null), null)

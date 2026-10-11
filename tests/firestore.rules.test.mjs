@@ -1,5 +1,6 @@
 // ทดสอบ firestore.rules ด้วย Firestore emulator
 // รัน: npm run test:rules  (ต้องมี firebase-tools และ Java)
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, describe, test } from 'node:test'
 import {
@@ -162,6 +163,35 @@ describe('markets/{id}/stalls (แผงรายแผง — C4, C6, B9)', () 
       status: 'pending',
       bookedBy: { ...bookedBy('alice'), name: 'Alice', phone: '0811111111' }
     }))
+  })
+
+  test('bookedBy ใส่ชื่อร้าน/ประเภทสินค้าได้ (สำเนาสาธารณะ) แต่ต้องเป็นข้อความสั้น', async () => {
+    await assertSucceeds(updateDoc(doc(tenant('alice'), `${STALL}/s1`), {
+      status: 'pending',
+      bookedBy: { ...bookedBy('alice'), shopName: 'ข้าวมันไก่ป้าแดง', goodsType: 'อาหารคาว' },
+      updatedAt: 'x'
+    }))
+  })
+
+  test('ชื่อร้านยาวเกิน 60 หรือไม่ใช่ข้อความ -> ปฏิเสธ', async () => {
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), {
+      status: 'pending', bookedBy: { ...bookedBy('alice'), shopName: 'ก'.repeat(61) }, updatedAt: 'x'
+    }))
+    await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), {
+      status: 'pending', bookedBy: { ...bookedBy('alice'), goodsType: { phone: '081' } }, updatedAt: 'x'
+    }))
+  })
+
+  test('ลูกค้าอ่านสำเนาชื่อร้านบนแผงที่จองแล้วได้ แต่อ่าน bookings ของคนอื่นไม่ได้', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await updateDoc(doc(db, `${STALL}/s2`), { bookedBy: { tenantId: 'bob', bookedAt: 't', bookingId: 'bk-bob', shopName: 'ร้านบ๊อบ', goodsType: 'ชา' } })
+      await setDoc(doc(db, 'bookings/bk-bob'), { tenantId: 'bob', stallId: 's2', customerName: 'Bob', customerPhone: '0899999999', status: 'approved' })
+    })
+    const snap = await assertSucceeds(getDoc(doc(tenant('alice'), `${STALL}/s2`)))
+    assert.equal(snap.data().bookedBy.shopName, 'ร้านบ๊อบ')
+    assert.equal('customerPhone' in snap.data().bookedBy, false)
+    await assertFails(getDoc(doc(tenant('alice'), 'bookings/bk-bob')))
   })
 
   test('tenant สร้างหรือลบแผงไม่ได้', async () => {
