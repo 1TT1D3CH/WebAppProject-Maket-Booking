@@ -218,6 +218,39 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
   return { success: true, mode: 'firestore', bookedBy: snap.exists() ? snap.data().bookedBy : null }
 }
 
+/**
+ * (admin) เติมชื่อร้าน/ประเภทสินค้าลง bookedBy ของแผงที่จองไว้ก่อนมีฟีเจอร์นี้
+ * อ่านจาก bookings ของแผงที่ยังถือครองอยู่ (bookedBy.bookingId ตรงกัน) เขียนเฉพาะฟิลด์ที่ยังไม่มี
+ * @returns {Promise<{ updated: number, skipped: number }>}
+ */
+export async function backfillPublicBookingInfo() {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  const [stallSnap, bookingSnap] = await Promise.all([getDocs(stallsCol()), getDocs(collection(db, 'bookings'))])
+  const bookings = new Map(bookingSnap.docs.map(d => [d.id, d.data()]))
+
+  const ops = []
+  let skipped = 0
+  for (const sd of stallSnap.docs) {
+    const bb = sd.data().bookedBy
+    if (!bb?.bookingId) continue
+    const b = bookings.get(bb.bookingId)
+    const patch = {}
+    const shopName = typeof b?.shopName === 'string' ? b.shopName.trim().slice(0, PUBLIC_TEXT_MAX) : ''
+    const goodsType = typeof b?.goodsType === 'string' ? b.goodsType.trim().slice(0, PUBLIC_TEXT_MAX) : ''
+    if (shopName && !bb.shopName) patch['bookedBy.shopName'] = shopName
+    if (goodsType && !bb.goodsType) patch['bookedBy.goodsType'] = goodsType
+    if (Object.keys(patch).length) ops.push({ ref: sd.ref, patch })
+    else skipped++
+  }
+
+  for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+    const batch = writeBatch(db)
+    ops.slice(i, i + BATCH_LIMIT).forEach(({ ref, patch }) => batch.update(ref, patch))
+    await batch.commit()
+  }
+  return { updated: ops.length, skipped }
+}
+
 /** อ่านรายละเอียดการจอง (ชื่อ/เบอร์โทร) — rules อนุญาตเฉพาะเจ้าของรายการและ admin */
 export async function fetchBooking(bookingId) {
   if (!isRealFirebaseConfigured || !db || !bookingId) return null

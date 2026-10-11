@@ -84,6 +84,20 @@
         </div>
 
       </form>
+
+      <!-- เติมชื่อร้าน/ประเภทสินค้าให้การจองเก่า (กดเองเท่านั้น) -->
+      <div v-if="authStore.isAdmin" class="mt-5 pt-4 border-t border-slate-200 text-xs space-y-2">
+        <div class="font-semibold text-slate-700">เติมข้อมูลร้านค้าให้การจองเก่า</div>
+        <p class="text-slate-500">การจองที่ทำก่อนมีฟีเจอร์ "ดูว่าแผงขายอะไร" จะแสดง "ไม่ได้ระบุ" กดปุ่มนี้เพื่อคัดลอกประเภทสินค้า/ชื่อร้านจากรายการจองมาแสดงบนแผง (ไม่แสดงชื่อจริงหรือเบอร์โทร)</p>
+        <button
+          type="button"
+          :disabled="backfilling"
+          @click="runBackfill"
+          class="px-4 py-2 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl transition disabled:opacity-50"
+        >
+          {{ backfilling ? 'กำลังเติมข้อมูล...' : 'เติมข้อมูลร้านค้าให้การจองเก่า' }}
+        </button>
+      </div>
     <template #footer>
       <button 
             type="button"
@@ -107,11 +121,28 @@
 import BaseModal from '../ui/BaseModal.vue'
 import { ref, computed, watch } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
+import { useAuthStore } from '../../stores/authStore'
+import { backfillPublicBookingInfo } from '../../services/firebaseService'
 import { Maximize2, X, Check } from 'lucide-vue-next'
 
 const props = defineProps({ isOpen: Boolean })
 const emit = defineEmits(['close'])
 const marketStore = useMarketStore()
+const authStore = useAuthStore()
+const backfilling = ref(false)
+
+async function runBackfill() {
+  backfilling.value = true
+  try {
+    const { updated, skipped } = await backfillPublicBookingInfo()
+    marketStore.showNotification(`เติมข้อมูลร้านค้าแล้ว ${updated} แผง (ข้าม ${skipped})`, 'success')
+  } catch (err) {
+    console.error('Backfill error:', err)
+    marketStore.showNotification(err.message || 'เติมข้อมูลไม่สำเร็จ', 'error')
+  } finally {
+    backfilling.value = false
+  }
+}
 
 const form = ref({
   name: '',
