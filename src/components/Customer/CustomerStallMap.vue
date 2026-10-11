@@ -141,68 +141,15 @@
           </div>
         </div>
 
-        <!-- ─── STALL INTERACTIVE CARDS ─── -->
-        <!-- แผงที่ที่ไม่พอแสดงแค่ชื่อแผง (สีบอกสถานะ) รายละเอียดเต็มดูได้โดยแตะแผง -->
-        <div
+        <!-- ─── STALL INTERACTIVE CARDS (ตัววาดกลาง StallView ใช้ร่วมกับ Admin Builder) ─── -->
+        <StallView
           v-for="stall in marketStore.pubFilteredStalls"
           :key="stall.id"
-          :title="stallTitle(stall)"
-          :aria-label="stallTitle(stall)"
-          role="button"
-          class="absolute rounded-2xl border-2 transition-all duration-200 shadow-xs hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between group backdrop-blur-xs overflow-hidden"
-          :class="[
-            isNameOnly(stall) ? 'items-center justify-center p-0.5' : 'p-2',
-            selectedCustomerStallId === stall.id 
-              ? 'ring-4 ring-indigo-600 border-indigo-500 bg-indigo-50/90 dark:bg-indigo-950/90 scale-105 z-20 shadow-xl' 
-              : getCustomerStallClasses(stall),
-          ]"
-          :style="{
-            left: `${stall.x + 10}px`,
-            top: `${stall.y + 10}px`,
-            width: `${stall.width}px`,
-            height: `${stall.height}px`
-          }"
+          :stall="stall"
+          :zone="marketStore.pubZoneById(stall.zoneId)"
+          :selected="selectedCustomerStallId === stall.id"
           @click="onSelectStall(stall)"
-        >
-          <!-- แผงเล็ก: ชื่อแผงบรรทัดเดียว ตัดท้ายเป็น … ไม่ขึ้นบรรทัดใหม่ -->
-          <span
-            v-if="isNameOnly(stall)"
-            class="w-full text-center font-bold font-mono tracking-tight whitespace-nowrap overflow-hidden text-ellipsis leading-tight text-slate-900 dark:text-white"
-            :class="isTinyStall(stall.width) ? 'text-[10px]' : 'text-xs'"
-          >{{ stall.stallNo }}</span>
-
-          <template v-else>
-            <div 
-              class="h-1 w-full rounded-full shrink-0 shadow-xs"
-              :style="{ backgroundColor: marketStore.pubZoneById(stall.zoneId)?.color }"
-            ></div>
-
-            <div class="flex items-center justify-between gap-1 min-w-0">
-              <span class="text-xs sm:text-sm font-bold text-slate-900 dark:text-white font-mono tracking-tight truncate whitespace-nowrap">{{ stall.stallNo }}</span>
-              <span 
-                class="text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold shadow-xs shrink-0 whitespace-nowrap"
-                :class="stall.status === 'available' ? 'bg-emerald-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'"
-              >
-                ฿{{ stall.price }}
-              </span>
-            </div>
-
-            <span class="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate whitespace-nowrap">
-              {{ marketStore.pubZoneById(stall.zoneId)?.name }}
-            </span>
-
-            <span 
-              v-if="stall.status === 'available'"
-              class="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap flex items-center gap-0.5"
-            >
-              จองแผง <ChevronRight class="w-3 h-3" />
-            </span>
-            <span v-else class="text-[10px] font-semibold whitespace-nowrap truncate"
-              :class="stall.status === 'pending' ? 'text-amber-600 dark:text-amber-400' : stall.status === 'disabled' ? 'text-rose-500 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'">
-              {{ statusText(stall.status) }}
-            </span>
-          </template>
-        </div>
+        />
 
       </div>
     </div>
@@ -279,10 +226,9 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
-import { pickStallLabelMode, isTinyStall } from '../../utils/stallLabel'
+import StallView from '../shared/StallView.vue'
 import { 
   Search, 
-  ChevronRight, 
   ShoppingBag, 
   DoorOpen, 
   LogOut, 
@@ -308,32 +254,12 @@ const selectedStallMetrics = computed(() => {
   return marketStore.getStallMetrics(selectedStall.value)
 })
 
-const STATUS_TEXT = { available: 'ว่าง', pending: 'รอตรวจสลิป', booked: 'จองแล้ว', disabled: 'ปิดบริการ' }
-const statusText = (status) => STATUS_TEXT[status] || ''
-const isNameOnly = (stall) => pickStallLabelMode(stall.width, stall.height) === 'name'
-const stallTitle = (stall) =>
-  `${stall.stallNo} · ${marketStore.pubZoneById(stall.zoneId)?.name} · ${statusText(stall.status)} · ฿${stall.price}`
-
 function onSelectStall(stall) {
   selectedCustomerStallId.value = stall.id
 }
 
 function showFacilityToast(obj) {
   marketStore.showNotification(`📍 ${obj.label}`, 'info')
-}
-
-function getCustomerStallClasses(stall) {
-  if (stall.status === 'pending') {
-    return 'bg-amber-50/90 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border-amber-300 dark:border-amber-700'
-  }
-  if (stall.status === 'booked') {
-    return 'bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 opacity-75'
-  }
-  if (stall.status === 'disabled') {
-    return 'bg-slate-200/60 dark:bg-slate-800/60 text-slate-400 border-slate-300 dark:border-slate-700 opacity-50'
-  }
-  // Available
-  return 'bg-emerald-50/90 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border-emerald-300/90 dark:border-emerald-800 hover:border-emerald-500 hover:bg-emerald-100/80 shadow-xs'
 }
 
 function getIconComponent(iconName) {

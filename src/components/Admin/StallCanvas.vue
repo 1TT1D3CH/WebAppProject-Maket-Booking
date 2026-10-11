@@ -137,67 +137,26 @@
         </div>
 
         <!-- ─── STALL BLOCKS LAYER ─── -->
-        <div
+        <StallView
           v-for="stall in marketStore.stalls"
           :key="stall.id"
-          class="absolute rounded-2xl border-2 transition-all duration-200 shadow-sm hover:-translate-y-0.5 hover:shadow-xl cursor-move flex flex-col justify-between p-2.5 group backdrop-blur-xs"
-          :class="[
-            marketStore.selectedStallId === stall.id 
-              ? 'ring-4 ring-indigo-500/80 border-indigo-500 bg-indigo-50/90 dark:bg-indigo-950/80 z-20 shadow-xl scale-[1.02]' 
-              : getStallStatusClasses(stall),
-          ]"
-          :style="{
-            left: `${stall.x + 20}px`,
-            top: `${stall.y + 20}px`,
-            width: `${stall.width}px`,
-            height: `${stall.height}px`
-          }"
+          mode="edit"
+          :offset="20"
+          :stall="stall"
+          :zone="marketStore.getZoneById(stall.zoneId)"
+          :selected="marketStore.selectedStallId === stall.id"
           @mousedown.stop="startDragStall($event, stall)"
           @touchstart.stop="startTouchDragStall($event, stall)"
           @click.stop="marketStore.selectStall(stall.id)"
         >
-          <!-- Active Selection Corner Handle Decorators -->
+          <!-- layer แก้ไข: จุดมุมแสดงว่าเลือกอยู่ + จุดจับย่อขยาย (ซ้อนบนแผง ไม่กินพื้นที่ข้อความ) -->
           <template v-if="marketStore.selectedStallId === stall.id">
             <div class="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-600 border-2 border-white rounded-full z-30 shadow-md animate-pulse"></div>
             <div class="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-600 border-2 border-white rounded-full z-30 shadow-md"></div>
             <div class="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-600 border-2 border-white rounded-full z-30 shadow-md"></div>
           </template>
 
-          <!-- Top Accent Zone Indicator Pill -->
-          <div 
-            class="h-1.5 w-full rounded-full mb-1 transition-transform group-hover:scale-x-105 shadow-xs"
-            :style="{ backgroundColor: marketStore.getZoneById(stall.zoneId)?.color || '#94a3b8' }"
-          ></div>
-
-          <!-- Stall No & Real-World Dimensions -->
-          <div class="flex items-center justify-between text-slate-900 dark:text-white font-semibold gap-1 leading-relaxed">
-            <span class="text-xs sm:text-sm font-bold font-mono tracking-tight drop-shadow-xs pt-0.5">{{ stall.stallNo }}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 font-mono text-slate-600 dark:text-slate-300 font-semibold shadow-xs">
-              {{ marketStore.pxToM(stall.width) }}×{{ marketStore.pxToM(stall.height) }}ม.
-            </span>
-          </div>
-
-          <!-- Price & Status Badge -->
-          <div class="flex items-center justify-between mt-auto gap-1">
-            <span 
-              class="text-[10px] px-2 py-0.5 rounded-full font-bold border shadow-xs transition-colors"
-              :class="{
-                'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800': stall.status === 'available',
-                'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700': stall.status === 'pending',
-                'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700': stall.status === 'booked',
-                'bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800': stall.status === 'disabled'
-              }"
-            >
-              {{ getStatusLabel(stall.status) }}
-            </span>
-
-            <span class="text-[11px] font-mono text-slate-800 dark:text-slate-200 font-bold">
-              ฿{{ stall.price }}
-            </span>
-          </div>
-
-          <!-- RESIZE HANDLE -->
-          <div 
+          <div
             class="absolute -bottom-2 -right-2 w-6 h-6 bg-indigo-600 hover:bg-indigo-700 text-white resize-handle rounded-full cursor-se-resize flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-950 transition-all duration-150 z-30"
             :class="marketStore.selectedStallId === stall.id ? 'opacity-100 scale-110' : 'opacity-0 group-hover:opacity-100'"
             title="ลากเพื่อปรับขนาด (Resize)"
@@ -206,7 +165,7 @@
           >
             <div class="w-2 h-2 border-r-2 border-b-2 border-white"></div>
           </div>
-        </div>
+        </StallView>
 
       </div>
     </div>
@@ -308,6 +267,7 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
 import { Trash2, RotateCw } from 'lucide-vue-next'
 import CanvasToolbar from '../canvas/CanvasToolbar.vue'
+import StallView from '../shared/StallView.vue'
 import { getIconComponent } from '../../utils/icons'
 import { useMediaQuery } from '../../composables/useMediaQuery'
 import { isShortcutBlocked } from '../../utils/keyboard'
@@ -360,27 +320,6 @@ const selectedMetrics = computed(() => {
 const selectedObjectMetrics = computed(() => {
   return marketStore.getObjectMetrics(marketStore.selectedObject)
 })
-
-function getStallStatusClasses(stall) {
-  if (stall.status === 'booked') {
-    return 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 opacity-90 hover:border-slate-400'
-  }
-  if (stall.status === 'disabled') {
-    return 'bg-slate-200/60 dark:bg-slate-800/60 text-slate-400 border-slate-300 dark:border-slate-700 opacity-60'
-  }
-  // Available
-  return 'bg-emerald-50/90 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 hover:border-emerald-500 shadow-xs'
-}
-
-function getStatusLabel(status) {
-  switch (status) {
-    case 'available': return 'ว่าง'
-    case 'pending': return 'รอตรวจสลิป'
-    case 'booked': return 'จองแล้ว'
-    case 'disabled': return 'ปิดบริการ'
-    default: return status
-  }
-}
 
 // Zoom controls
 function zoomIn() {
