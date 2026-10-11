@@ -497,3 +497,52 @@ describe('ผู้เช่าส่งสลิปใหม่ / ยกเล�
     await assertFails(updateDoc(doc(tenant('alice'), `${STALL}/s1`), { status: 'available', bookedBy: null, updatedAt: 'x' }))
   })
 })
+
+describe('เส้นทางเต็มของระบบสลิป (ต่อเนื่องในฐานข้อมูลเดียว)', () => {
+  const SLIP = 'data:image/webp;base64,UklGRg=='
+  const book = async () => {
+    const db = tenant('alice')
+    const batch = writeBatch(db)
+    batch.update(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-flow'), updatedAt: 'x' })
+    batch.set(doc(db, 'bookings/bk-flow'), {
+      tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111', goodsType: 'ชา',
+      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending'
+    })
+    batch.set(doc(db, 'bookingSlips/bk-flow'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
+    await batch.commit()
+  }
+  const adminDecide = async (uid, bookingPatch, stallPatch) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'bookings/bk-flow'), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...bookingPatch })
+    if (stallPatch) batch.update(doc(db, `${STALL}/s1`), stallPatch)
+    await batch.commit()
+  }
+
+  test('จอง -> admin ขอสลิปใหม่ -> ผู้เช่าส่งใหม่ -> owner อนุมัติ -> แผงเป็น booked', async () => {
+    await book()
+    await adminDecide('admin1', { status: 'needs_slip', statusReason: 'รูปไม่ชัด' }, null)
+    const db = tenant('alice')
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'bookings/bk-flow'), { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp() })
+    batch.set(doc(db, 'bookingSlips/bk-flow'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
+    await assertSucceeds(batch.commit())
+    await assertSucceeds(adminDecide('owner1', { status: 'approved' }, { status: 'booked' }))
+    await assertSucceeds(getDoc(doc(tenant('alice'), 'bookings/bk-flow')))
+    // คนอื่นจองแผงที่อนุมัติแล้วไม่ได้
+    await assertFails(updateDoc(doc(tenant('bob'), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('bob', 'bk-b'), updatedAt: 'x' }))
+  })
+
+  test('จอง -> admin ปฏิเสธ -> แผงว่าง และคนอื่นจองต่อได้', async () => {
+    await book()
+    await assertFails(updateDoc(doc(tenant('bob'), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('bob', 'bk-b'), updatedAt: 'x' }))
+    await assertSucceeds(adminDecide('admin1', { status: 'rejected', statusReason: 'ยอดไม่ตรง' }, { status: 'available', bookedBy: null }))
+    await assertSucceeds(updateDoc(doc(tenant('bob'), `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('bob', 'bk-b'), updatedAt: 'x' }))
+  })
+
+  test('admin บันทึกผัง (แก้ราคา/ตำแหน่งแผง) ยังทำได้กับ rules ใหม่ แม้แผงกำลังรอตรวจ', async () => {
+    await book()
+    await assertSucceeds(updateDoc(doc(tenant('admin1'), `${STALL}/s1`), { x: 55, price: 600 }))
+    await assertSucceeds(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { name: 'ตลาดใหม่', updatedAt: 'x' }))
+  })
+})
