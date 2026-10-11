@@ -197,8 +197,8 @@ onMounted(() => {
 
 // ฟังแจ้งเตือนใหม่ทุกครั้งที่ผู้ใช้/สิทธิ์เปลี่ยน
 watch(
-  () => [authStore.currentUser?.uid, authStore.isAdmin],
-  ([uid, isAdmin]) => notificationStore.initNotificationSync(uid, isAdmin),
+  () => authStore.currentUser?.uid,
+  (uid) => notificationStore.initNotificationSync(uid),
   { immediate: true }
 )
 

@@ -307,7 +307,7 @@ defineEmits([
 ])
 
 const unreadCount = computed(() => {
-  return notificationStore.unreadCount(authStore.currentUser?.uid, authStore.isAdmin || authStore.isOwner)
+  return notificationStore.unreadCount(authStore.currentUser?.uid)
 })
 
 function confirmDiscard() {

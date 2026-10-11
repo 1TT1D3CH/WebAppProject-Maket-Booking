@@ -143,23 +143,19 @@ const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
 const marketStore = useMarketStore()
 
-const isAdminOrOwner = computed(() => {
-  return authStore.isAdmin || authStore.isOwner
-})
-
 const list = computed(() => {
-  return notificationStore.tenantNotifications(authStore.currentUser?.uid, isAdminOrOwner.value)
+  return notificationStore.tenantNotifications(authStore.currentUser?.uid)
 })
 
 const unreadCount = computed(() => {
-  return notificationStore.unreadCount(authStore.currentUser?.uid, isAdminOrOwner.value)
+  return notificationStore.unreadCount(authStore.currentUser?.uid)
 })
 
 function handleMarkAllAsRead() {
-  notificationStore.markAllAsRead(authStore.currentUser?.uid, isAdminOrOwner.value)
+  notificationStore.markAllAsRead(authStore.currentUser?.uid)
 }
 
-// ลบได้เฉพาะแจ้งเตือนของตัวเอง (admin ที่เห็นของทุกคนก็ลบได้แค่ของตัวเอง)
+// ลบได้เฉพาะแจ้งเตือนของตัวเอง
 const ownCount = computed(() => {
   const uid = authStore.currentUser?.uid
   return uid ? list.value.filter(n => n.tenantId === uid).length : 0

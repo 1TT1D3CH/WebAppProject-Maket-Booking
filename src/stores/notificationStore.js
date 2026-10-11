@@ -43,24 +43,19 @@ export const useNotificationStore = defineStore('notification', {
   }),
 
   getters: {
-    unreadCount: (state) => (tenantId, isAdminOrOwner = false) => {
-      if (isAdminOrOwner) {
-        return state.notifications.filter(n => !n.isRead).length
-      }
+    // แจ้งเตือนของ "ตัวเอง" เท่านั้น (admin ก็เช่นกัน — ไม่รวมแจ้งเตือนของผู้เช่าคนอื่น ไม่งั้น badge ไม่มีวันหาย)
+    unreadCount: (state) => (tenantId) => {
       const targetId = tenantId || 'demo-tenant-001'
       return state.notifications.filter(
         n => !n.isRead && (n.tenantId === targetId || n.tenantId === 'demo-tenant-001')
       ).length
     },
 
-    tenantNotifications: (state) => (tenantId, isAdminOrOwner = false) => {
-      let list = state.notifications
-      if (!isAdminOrOwner) {
-        const idToMatch = tenantId || 'demo-tenant-001'
-        list = state.notifications.filter(
-          n => n.tenantId === idToMatch || n.tenantId === 'demo-tenant-001'
-        )
-      }
+    tenantNotifications: (state) => (tenantId) => {
+      const idToMatch = tenantId || 'demo-tenant-001'
+      const list = state.notifications.filter(
+        n => n.tenantId === idToMatch || n.tenantId === 'demo-tenant-001'
+      )
       return [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     }
   },
@@ -99,7 +94,7 @@ export const useNotificationStore = defineStore('notification', {
      * TODO: การล้างแจ้งเตือนเก่าควรใช้ Firestore TTL policy (เช่นฟิลด์ expireAt)
      * หรือ Cloud Function ฝั่ง server ไม่ใช่ให้ client ลบของทุกคน
      */
-    initNotificationSync(uid, isAdminOrOwner = false) {
+    initNotificationSync(uid) {
       if (this.unsubscribeListener) {
         this.unsubscribeListener()
         this.unsubscribeListener = null
@@ -114,9 +109,7 @@ export const useNotificationStore = defineStore('notification', {
 
       try {
         const notifCollection = collection(db, 'notifications')
-        const notifQuery = isAdminOrOwner
-          ? notifCollection
-          : query(notifCollection, where('tenantId', '==', uid))
+        const notifQuery = query(notifCollection, where('tenantId', '==', uid))
 
         this.unsubscribeListener = keepAlive(({ ok, fail }) => onSnapshot(notifQuery, (snapshot) => {
           ok()
@@ -125,7 +118,7 @@ export const useNotificationStore = defineStore('notification', {
             const data = docSnap.data()
             const id = docSnap.id
             if (!this.deletedIds.includes(id)) {
-              remoteItems.push({ id, ...data })
+              remoteItems.push({ ...data, id }) // id ของเอกสารต้องชนะ id ที่เคยเก็บซ้ำในข้อมูล ไม่งั้นอ่านแล้ว/ลบไม่ถึง Firestore
             }
           })
 
@@ -165,17 +158,16 @@ export const useNotificationStore = defineStore('notification', {
           createdAt: item.createdAt || new Date().toISOString()
         }
 
-        this.notifications.unshift(notifItem)
-
         if (isRealFirebaseConfigured && db) {
+          // listener ใส่รายการให้เอง (พร้อม id จริงของเอกสาร) ไม่ unshift ซ้ำ
           try {
-            await addDoc(collection(db, 'notifications'), {
-              ...notifItem,
-              createdAt: notifItem.createdAt
-            })
+            const { id: _localId, ...data } = notifItem
+            await addDoc(collection(db, 'notifications'), data)
           } catch (err) {
             console.warn('Firestore notification batch add notice:', err.message)
           }
+        } else {
+          this.notifications.unshift(notifItem)
         }
       }
 
@@ -198,15 +190,16 @@ export const useNotificationStore = defineStore('notification', {
         createdAt: new Date().toISOString()
       }
 
-      this.notifications.unshift(notifItem)
-      this.persistLocal()
-
       if (isRealFirebaseConfigured && db) {
         try {
-          await addDoc(collection(db, 'notifications'), notifItem)
+          const { id: _localId, ...data } = notifItem
+          await addDoc(collection(db, 'notifications'), data)
         } catch (err) {
           console.warn('Firestore notification add notice:', err.message)
         }
+      } else {
+        this.notifications.unshift(notifItem)
+        this.persistLocal()
       }
     },
 
@@ -223,13 +216,22 @@ export const useNotificationStore = defineStore('notification', {
       }
     },
 
-    markAllAsRead(tenantId, isAdminOrOwner = false) {
+    markAllAsRead(tenantId) {
+      const changed = []
       this.notifications.forEach(n => {
-        if (isAdminOrOwner || !tenantId || n.tenantId === tenantId || n.tenantId === 'demo-tenant-001') {
+        if (!n.isRead && (!tenantId || n.tenantId === tenantId || n.tenantId === 'demo-tenant-001')) {
           n.isRead = true
+          changed.push(n.id)
         }
       })
       this.persistLocal()
+
+      // เขียนลง Firestore ด้วย ไม่งั้น snapshot ถัดไปจะกลับเป็นยังไม่อ่าน
+      if (isRealFirebaseConfigured && db && changed.length) {
+        const batch = writeBatch(db)
+        changed.forEach(id => batch.update(doc(db, 'notifications', id), { isRead: true }))
+        batch.commit().catch((err) => console.warn('Mark all read notice:', err.message))
+      }
     },
 
     deleteNotification(id) {
