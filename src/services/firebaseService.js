@@ -31,6 +31,7 @@ const selfActor = (uid, name) => {
   return { uid, name, role }
 }
 
+const lockRef = (stallId, key) => doc(db, 'bookingLocks', `${stallId}_${key}`)
 const marketRef = () => doc(db, 'markets', MARKET_ID)
 const stallsCol = () => collection(db, 'markets', MARKET_ID, 'stalls')
 
@@ -352,6 +353,10 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
     const sSnap = await tx.get(stallRef)
     if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้ (อาจถูกลบออกจากผัง)')
 
+    // การจองตามวัน/รอบ: สถานะแผงไม่เปลี่ยน ต้องเปลี่ยน lock ของทุก slot แทน (อ่านก่อนเขียน)
+    const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+    const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+
     const auditId = addAuditToBatch(tx, {
       actor,
       action: DECISION_ACTION[decision],
@@ -368,8 +373,16 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
     tx.update(bookingRef, update)
 
     const now = new Date().toISOString()
-    if (decision === 'approved') tx.update(stallRef, { status: 'booked', updatedAt: now })
-    if (decision === 'rejected') tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: now })
+    if (isSlot) {
+      for (const ls of lockSnaps) {
+        if (!ls.exists() || ls.data().bookingId !== bookingId) continue
+        if (decision === 'approved') tx.update(ls.ref, { status: 'approved' })
+        if (decision === 'rejected') tx.delete(ls.ref)
+      }
+    } else {
+      if (decision === 'approved') tx.update(stallRef, { status: 'booked', updatedAt: now })
+      if (decision === 'rejected') tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: now })
+    }
 
     const stallNo = b.stallNo || sSnap.data().stallNo || ''
     const notice = DECISION_NOTICE[decision](stallNo, cleanReason)
@@ -461,6 +474,8 @@ export async function cancelMyBooking(bookingId) {
     const stallRef = doc(stallsCol(), b.stallId)
     const sSnap = await tx.get(stallRef)
     if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้')
+    const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+    const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
     const auditId = addAuditToBatch(tx, {
       actor: selfActor(b.tenantId, b.customerName),
       action: 'booking.cancel_self',
@@ -472,7 +487,10 @@ export async function cancelMyBooking(bookingId) {
       after: { status: 'cancelled' }
     })
     tx.update(bookingRef, { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId: auditId })
-    if (sSnap.data().bookedBy?.bookingId === bookingId) {
+    if (isSlot) {
+      // ปล่อยทุก slot ของการจองนี้ (เฉพาะ lock ที่ยังชี้การจองนี้)
+      for (const ls of lockSnaps) if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
+    } else if (sSnap.data().bookedBy?.bookingId === bookingId) {
       tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
     }
   })
@@ -506,4 +524,132 @@ export async function deleteDecidedBookings(bookings, actor) {
     await batch.commit()
   }
   return targets.length
+}
+
+// ─── จองตามวัน/รอบ (bookingLocks) ───────────────────────────────────────────
+
+/**
+ * จองแผงหลายวัน/รอบ: booking + lock ทุก slot + สลิป + audit log ใน transaction เดียว
+ * ล้มส่วนใดส่วนหนึ่ง (เช่น มี slot ถูกจองไปก่อน) จะไม่มีอะไรค้าง
+ * customerInfo.slots = ['2026-10-17_all', ...], customerInfo.slip = { dataUrl, mime, bytes, hash }
+ * ปฏิทินตลาด (วันเปิด/ปิด เวลาปิดรับ) ตรวจที่ client (canBookSlot) rules ตรวจไม่ได้
+ * @returns {Promise<{ bookingId: string }>}
+ */
+export async function bookStallSlots(stallId, customerInfo) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase จึงจองไม่ได้')
+  if (!customerInfo?.tenantId) throw new Error('กรุณาเข้าสู่ระบบก่อนจอง')
+  if (!customerInfo.slip?.dataUrl) throw new Error('กรุณาแนบสลิปการโอนเงินก่อนจอง')
+  const slots = [...new Set(customerInfo.slots || [])].sort()
+  if (slots.length < 1 || slots.length > 7) throw new Error('เลือกวัน/รอบได้ครั้งละ 1-7 ช่อง')
+
+  const stallRef = doc(stallsCol(), stallId)
+  const bookingRef = doc(collection(db, 'bookings'))
+  const shopName = (customerInfo.shopName || '').trim().slice(0, PUBLIC_TEXT_MAX)
+  const goodsType = (customerInfo.goodsType || '').trim().slice(0, PUBLIC_TEXT_MAX)
+
+  await runTransaction(db, async (tx) => {
+    const stallDoc = await tx.get(stallRef)
+    if (!stallDoc.exists()) {
+      throw new Error('ไม่พบข้อมูลแผงค้านี้ในระบบ (ผู้ดูแลอาจยังไม่ได้บันทึกผัง) กรุณาลองใหม่ภายหลัง')
+    }
+    const stall = stallDoc.data()
+    if (stall.status === 'disabled') throw new Error(`แผงค้า ${stall.stallNo} ปิดให้บริการ ไม่สามารถจองได้`)
+    if (stall.status === 'booked' || stall.status === 'pending') {
+      throw new Error(`แผงค้า ${stall.stallNo} ถูกจองแบบเดิมไว้ ติดต่อผู้ดูแลตลาด`)
+    }
+
+    const lockSnaps = await Promise.all(slots.map(k => tx.get(lockRef(stallId, k))))
+    const taken = slots.filter((k, i) => lockSnaps[i].exists())
+    if (taken.length) {
+      const err = new Error('มีช่องที่ถูกจองไปแล้ว')
+      err.code = 'slot-taken'
+      err.slots = taken
+      throw err
+    }
+
+    const pricePerSlot = stall.price
+    const totalAmount = pricePerSlot * slots.length
+    const auditId = addAuditToBatch(tx, {
+      actor: selfActor(customerInfo.tenantId, customerInfo.name),
+      action: 'booking.create',
+      targetType: 'booking',
+      targetId: bookingRef.id,
+      bookingId: bookingRef.id,
+      marketId: MARKET_ID,
+      after: { status: 'pending', stallNo: stall.stallNo || null }
+    })
+    tx.set(bookingRef, {
+      stallId,
+      stallNo: stall.stallNo || null,
+      tenantId: customerInfo.tenantId,
+      customerName: customerInfo.name,
+      customerPhone: customerInfo.phone,
+      shopName,
+      goodsType,
+      slots,
+      firstDate: slots[0].split('_')[0],
+      lastDate: slots[slots.length - 1].split('_')[0],
+      pricePerSlot,
+      totalAmount,
+      amountDue: totalAmount,
+      slipHash: customerInfo.slip.hash,
+      slipUploadedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      status: 'pending',
+      lastAuditId: auditId
+    })
+    for (const key of slots) {
+      const [date, roundId] = key.split('_')
+      const lock = { marketId: MARKET_ID, stallId, date, roundId, slotKey: key, bookingId: bookingRef.id, status: 'pending', createdAt: serverTimestamp() }
+      if (shopName) lock.shopName = shopName
+      if (goodsType) lock.goodsType = goodsType
+      tx.set(lockRef(stallId, key), lock)
+    }
+    tx.set(slipRef(bookingRef.id), buildSlipDoc({
+      tenantId: customerInfo.tenantId,
+      marketId: MARKET_ID,
+      dataUrl: customerInfo.slip.dataUrl,
+      mime: customerInfo.slip.mime,
+      bytes: customerInfo.slip.bytes,
+      createdAt: serverTimestamp()
+    }))
+  })
+  return { bookingId: bookingRef.id }
+}
+
+/** ฟัง lock ของช่อง (วัน+รอบ) ที่เลือกแบบ realtime ใช้ระบายสีแผงบนผัง */
+export function subscribeLocksForSlot(key, onData, onError) {
+  if (!isRealFirebaseConfigured || !db) return () => {}
+  const q = query(collection(db, 'bookingLocks'), where('slotKey', '==', key))
+  return keepAlive(({ ok, fail }) => onSnapshot(q, (snap) => {
+    ok()
+    onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  }, (err) => {
+    onError?.(err)
+    fail(err)
+  }))
+}
+
+/** lock ของแผงเดียวในช่วงวันที่ (อ่านครั้งเดียว) ต้องมี index bookingLocks (stallId, date) */
+export async function fetchStallLocks(stallId, fromDate, toDate) {
+  if (!isRealFirebaseConfigured || !db) return []
+  const snap = await getDocs(query(
+    collection(db, 'bookingLocks'),
+    where('stallId', '==', stallId),
+    where('date', '>=', fromDate),
+    where('date', '<=', toDate)
+  ))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+/** จำนวน lock ของรอบหนึ่งตั้งแต่วันที่ระบุ (ใช้ก่อนลบรอบออกจากตั้งค่า) ต้องมี index (roundId, date) */
+export async function countFutureLocksOfRound(roundId, fromDate) {
+  if (!isRealFirebaseConfigured || !db) return 0
+  const snap = await getDocs(query(
+    collection(db, 'bookingLocks'),
+    where('roundId', '==', roundId),
+    where('date', '>=', fromDate),
+    limit(200)
+  ))
+  return snap.size
 }

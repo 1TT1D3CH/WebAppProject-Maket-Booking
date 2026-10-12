@@ -1,0 +1,131 @@
+รายงานการทำงาน
+==============
+โปรเจกต์: Dynamic Market Stall Booking System
+วันที่: 12 ต.ค. 2569 (2026-10-12)
+อ้างอิงแผนจาก: prompt/missing-systems-th.md
+
+สรุปสั้น
+--------
+- ทำส่วน 0 (สำรวจโค้ด) และส่วน 1 (audit log) เสร็จ
+- เอา LINE ออกจากแผน (ลบส่วน 8 และข้อความที่เกี่ยวกับ LINE)
+- แก้บั๊ก admin/owner จอง-ยกเลิก-ส่งสลิปเองไม่ผ่าน (หัวข้อ 6)
+- เพิ่มปุ่มลบรายการจองที่ปฏิเสธแล้วในหน้าตรวจสลิป (หัวข้อ 7)
+- ส่วน 2 (จองตามวัน/รอบตลาด) อยู่ระหว่างทำ ยังไม่มีโค้ดส่วนนี้ commit (หัวข้อ 8)
+- commit ทั้งหมด: 35fb8b2 (audit log), b7934d6 (แก้บั๊ก role), 4ccce4c (ปุ่มลบ) ยังไม่ push และยังไม่ deploy
+- ผลทดสอบล่าสุด (หลังหัวข้อ 7): build ผ่าน, unit test 81/81, rules test 96/96
+
+1) แก้ไฟล์แผน prompt/missing-systems-th.md (เอา LINE ออก)
+---------------------------------------------------------
+- ลบ "ส่วน 8" ทั้งส่วน (ตัวกวาดการจองด้วย Cloudflare Worker ซึ่งต่อยอดจาก LINE)
+- ลบ/เปลี่ยนข้อความ LINE ในตารางลำดับ ส่วนหัว ส่วน 0 ส่วน 3 และหมายเหตุท้ายไฟล์
+- แจ้งเตือนใช้เฉพาะระบบแจ้งเตือนในแอปที่มีอยู่ (notificationStore)
+- ผลที่ตามมา: ถ้าไม่มีใครเปิดเว็บ รายการจองที่หมดเวลาจะไม่ถูกตั้งสถานะ "หมดเวลา" เอง
+  (แต่แผงยังว่างให้จองทับได้ตามกติกา rules)
+- ในโค้ดไม่มีอะไรเกี่ยวกับ LINE อยู่ก่อนแล้ว จึงไม่ต้องลบโค้ด
+
+2) ส่วน 0: สำรวจโค้ดจริง (ไม่แก้โค้ด)
+-------------------------------------
+ค่าตั้งต้นก่อนแก้: build ผ่าน, unit 77/77, rules 77/77
+สิ่งที่พบ (โค้ดจริงต่างจากที่ prompt สมมติ):
+- แผงอยู่ที่ markets/main-layout/stalls/{id} มี status/bookedBy/price
+- การกันแผงใช้ stall.status ไม่มี bookingLocks / stallHolds
+- bookings ไม่มีวันที่/slots ใช้ amountDue; สถานะที่มี: pending, needs_slip, approved, rejected, cancelled
+- จองต้องแนบสลิปในคำสั่งเขียนเดียวกัน
+- saveLayoutToFirestore เขียน status/bookedBy ของแผงด้วยเมื่อ admin แก้แผงนั้น (ห้ามแก้ตามกติกา)
+- ไม่มี router, ไม่มี library กราฟ/Excel/PDF
+สถานะ 6 ระบบ: หมดเวลาจอง=ยังไม่มี, ยกเลิก+คืนเงิน=มีบางส่วน, จองตามวัน/รอบ=ยังไม่มี,
+รายงาน+Excel=ยังไม่มี, ประวัติ+ใบเสร็จ=มีบางส่วน, audit log=ยังไม่มี (ตอนนี้ทำแล้ว)
+
+3) ส่วน 1: Audit log (commit 35fb8b2)
+-------------------------------------
+3.1 ไฟล์ใหม่
+- src/constants/auditActions.js   ชุด action พร้อมคำแปลไทย, ป้ายสถานะ/สิทธิ์
+- src/services/auditLog.js        addAuditToBatch(), diffFields(), fetchAuditPage()
+- src/utils/auditDiff.js          diffFields, summarizeChange (ไม่พึ่ง Firebase เพื่อให้ unit test ได้)
+- src/stores/auditLogStore.js     store ของหน้า log (โหลดทีละ 50 + โหลดเพิ่ม + ตัวกรอง)
+- src/components/Admin/AuditLogPanel.vue            หน้า "บันทึกการทำงาน" (มือถือเป็นการ์ด, คอมเป็นตาราง)
+- src/components/Admin/slip/BookingAuditHistory.vue ประวัติการดำเนินการของการจองในหน้าตรวจสลิป
+- tests/auditDiff.test.mjs        unit test 4 ข้อ
+
+3.2 ไฟล์ที่แก้
+- src/services/firebaseService.js
+    สร้างการจอง / ส่งสลิปใหม่ / ผู้เช่ายกเลิก / ตัดสินสลิป (อนุมัติ, ขอสลิปใหม่, ปฏิเสธ)
+    เขียน audit log ใน transaction เดียวกับการกระทำ และเก็บ lastAuditId ใน booking
+    decideBooking รับ actor แทน adminUid
+- src/components/Admin/MembersPanel.vue  เปลี่ยน role + log ใน batch เดียวกัน
+- src/stores/authStore.js                เพิ่ม getter auditActor {uid, name, role}
+- src/stores/slipReviewStore.js, src/components/Admin/slip/SlipReviewDetail.vue  ส่ง actor
+- src/stores/marketStore.js, src/App.vue, src/components/Navbar.vue  โหมด/เมนู "บันทึกการทำงาน" (เฉพาะ admin/owner)
+- firestore.rules
+    auditLogs: สร้างได้อย่างเดียว แก้/ลบไม่ได้ (แม้ owner) อ่านได้เฉพาะ admin/owner
+    ตรวจ actorUid == ผู้ใช้, at == request.time, actorRole ตรงกับ role จริงใน users/{uid},
+    action อยู่ในรายการ, keys จำกัด, ผู้เช่าเขียนได้เฉพาะ action ของผู้เช่าและเฉพาะการจองของตัวเอง
+    booking: การเปลี่ยนสถานะต้องมี lastAuditId ใหม่ที่ชี้ log ซึ่ง actor/เวลา/เป้าหมาย/action ตรงกับการกระทำ
+    การจองเก่าที่ยังไม่มี lastAuditId ผ่านได้ครั้งแรก
+- firestore.indexes.json  เพิ่ม index auditLogs (bookingId, at desc) และ (action, at desc)
+- package.json            เพิ่ม tests/auditDiff.test.mjs ใน test:unit
+- tests/firestore.rules.test.mjs  แก้เส้นทางเดิมให้ใส่ log และเพิ่มชุดทดสอบ audit log 13 ข้อ
+
+3.3 ผลทดสอบ (รันจริง)
+- npm run build            ผ่าน
+- npm run test:unit        81 / 81 ผ่าน
+- npm run test:rules       90 / 90 ผ่าน
+
+4) ที่ยังไม่ได้ทำ / ข้อควรรู้
+-----------------------------
+- ยังไม่ได้เปิดหน้า "บันทึกการทำงาน" และประวัติในเบราว์เซอร์จริง (ผ่านแค่ build และ test)
+- log เรื่อง "ตั้งค่าตลาด" และ "เปิด/ปิดแผง" ยังไม่ทำ เพราะอยู่ในโค้ดบันทึกผัง (saveLayoutToFirestore)
+  ซึ่งห้ามแตะ ข้อเสนอ: เรียกจาก component ที่กดปุ่ม "บันทึกผัง" หลังบันทึกสำเร็จ (รอคุณตัดสินใจ)
+- การเปลี่ยน role: ไม่บังคับที่ rules ของ users (doc นั้นไม่มีฟิลด์ lastAuditId)
+- การจองเก่าจะไม่มีประวัติย้อนหลัง
+- ตัวกรองฝั่งเซิร์ฟเวอร์ใช้ได้ครั้งละ 1 ตัว (เลขการจอง หรือ action) + ช่วงวันที่
+  ส่วนชื่อคนทำและค้นเลขแผงกรองในหน้าเว็บจากแถวที่โหลดแล้ว
+- owner ที่เข้า Firebase Console ยังลบ log ได้ (กันไม่ได้บน Spark)
+- ต้อง deploy rules + indexes + hosting พร้อมกันในคำสั่งเดียว (ส่วน 7)
+  มิฉะนั้นโค้ดเก่าที่ค้าง cache จะจอง/ยกเลิก/ส่งสลิปไม่ผ่าน
+- index ใหม่ต้องเป็น Enabled ใน Console ก่อนหน้า log จะค้นได้
+
+5) สิ่งที่ต้องทำเอง
+-------------------
+- ก่อนใช้งานจริง ต้อง deploy rules + indexes + hosting พร้อมกัน (npm run deploy)
+- ทดสอบ: อนุมัติสลิป 1 รายการ แล้วเปิด "บันทึกการทำงาน" ต้องเห็นชื่อ เวลา และ "รอตรวจสลิป → อนุมัติแล้ว"
+- วาง rules ที่ใช้อยู่จริงจาก Firebase Console เพื่อเทียบกับ firestore.rules (ส่วน 0 ข้อ 4)
+- ตัดสินใจเรื่อง log ตั้งค่าตลาด/เปิด-ปิดแผง
+- สั่ง "ตกลง" ถ้าให้เริ่มส่วน 2 (จองตามวัน/รอบตลาด)
+
+6) แก้บั๊ก role ใน audit log (commit b7934d6)
+---------------------------------------------
+อาการ: บัญชี admin/owner จอง ยกเลิก หรือส่งสลิปใหม่ด้วยตัวเองไม่ผ่าน (error สิทธิ์)
+สาเหตุ: log ระบุ role เป็น 'tenant' เสมอ แต่ rules ตรวจว่า role ใน log ต้องตรงกับ role จริงใน users/{uid}
+การแก้: src/services/firebaseService.js ใช้ role จริงของผู้ใช้ (selfActor)
+test: เพิ่ม 1 ข้อ (admin จองเองผ่าน / ระบุเป็น tenant ไม่ผ่าน) -> rules 91/91
+หมายเหตุ: ผมยังไม่ทราบอาการจริงที่ผู้ใช้เจอ จึงยืนยันไม่ได้ว่าเป็นบั๊กเดียวกัน
+ถ้ายังพัง ให้ส่งข้อความ error + บัญชีที่ใช้ + ขั้นตอนที่พัง และตรวจว่า deploy rules กับ hosting พร้อมกันหรือไม่
+
+7) ปุ่มลบรายการจองที่ปฏิเสธแล้ว (commit 4ccce4c)
+------------------------------------------------
+- หน้าตรวจสลิป แท็บ "ตัดสินแล้ว": ปุ่ม "ล้างรายการที่ปฏิเสธทั้งหมด (N)" พร้อมกล่องยืนยัน
+- หน้ารายละเอียดของรายการที่ปฏิเสธ: ปุ่ม "ลบรายการนี้ออกจากรายการ"
+- ลบรูปสลิปไปด้วย และเขียน audit log (booking.delete) ใน batch เดียวกัน
+- ลบได้เฉพาะ rejected/cancelled ไม่ลบ approved (แผงยังเป็นของผู้เช่า) rules บังคับซ้ำ
+- ไฟล์: firebaseService.js (deleteDecidedBookings), slipReviewStore.js, SlipReviewPanel.vue,
+  SlipReviewDetail.vue, firestore.rules, auditActions.js, tests/firestore.rules.test.mjs (+5 ข้อ)
+- ผล: build ผ่าน, unit 81/81, rules 96/96
+
+8) ส่วน 2: จองตามวัน/รอบตลาด (เสร็จ)
+------------------------------------
+- ช่องจอง (slot) = วัน + รอบ, slotKey = 'YYYY-MM-DD_roundId' (ไม่ตั้งรอบ = 'all')
+- bookingLocks/{stallId}_{slotKey} กันจองซ้ำ (อ่านได้ทุกคน ไม่มีข้อมูลส่วนตัว)
+- booking + lock ทุก slot + สลิป + audit log เขียนใน transaction เดียว (bookStallSlots) ชนกันแล้วไม่มีอะไรค้าง
+- อนุมัติ: lock -> approved / ปฏิเสธ-ยกเลิก: ลบ lock ปล่อยแผง (decideBooking, cancelMyBooking)
+- การจองเก่า (กันแผงด้วย stall.status) ยังใช้ได้เหมือนเดิม ไม่ต้องย้ายข้อมูล ไม่มีสคริปต์ migrate
+- ไม่แตะโค้ดบันทึก/โหลดผัง: ผังลูกค้าคำนวณสีแผงจาก locks ของวัน/รอบที่เลือกเอง (CustomerStallMap)
+- ไฟล์ใหม่: utils/marketCalendar.js, services/marketSettings.js, stores/slotStore.js,
+  Customer/DayRoundBar.vue, Admin/BookingSettingsModal.vue, tests/marketCalendar.test.mjs
+- ไฟล์ที่แก้: firebaseService.js, firestore.rules, firestore.indexes.json, BookingModal.vue,
+  CustomerStallMap.vue, MyBookingsModal.vue (แสดงวันที่จอง), SlipReviewPanel.vue + SlipReviewDetail.vue
+  (แสดงวันที่จอง/ราคาต่อช่อง), Navbar.vue, App.vue, package.json, tests/firestore.rules.test.mjs
+- rules: ตั้งค่าตลาดแก้ได้เฉพาะ admin (rounds <= 6), จอง <= 7 slot, ราคา/ยอดรวมตรวจกับราคาแผงจริง,
+  ปฏิทินตลาด (วันเปิด/ปิด ล่วงหน้า เวลาปิดรับ) ตรวจที่ client เท่านั้น
+- ผลทดสอบ (รันจริง): build ผ่าน, unit 91/91, rules 119/119
+- ยังไม่ได้เปิดดูในเบราว์เซอร์จริง และยังไม่ push / deploy

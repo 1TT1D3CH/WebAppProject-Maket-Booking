@@ -792,3 +792,194 @@ describe('ลบรายการจองที่ตัดสินแล้�
     await assertFails(remove('alice'))
   })
 })
+
+describe('จองตามวัน/รอบ (bookingLocks)', () => {
+  const SLIP = 'data:image/webp;base64,UklGRg=='
+  const keyOf = (date, round = 'all') => `${date}_${round}`
+  const lockId = (stallId, key) => `${stallId}_${key}`
+
+  const slotBookingDoc = (uid, stallId, slots, over = {}) => ({
+    tenantId: uid, stallId, stallNo: 'A1', customerName: uid, customerPhone: '0811111111', shopName: 'ร้านชา', goodsType: 'ชา',
+    slots, firstDate: slots[0].split('_')[0], lastDate: slots[slots.length - 1].split('_')[0],
+    pricePerSlot: 500, totalAmount: 500 * slots.length, amountDue: 500 * slots.length,
+    slipHash: 'h', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending', ...over
+  })
+  const lockDoc = (stallId, key, bookingId, over = {}) => {
+    const [date, roundId] = key.split('_')
+    return { marketId: 'main-layout', stallId, date, roundId, slotKey: key, bookingId, status: 'pending', shopName: 'ร้านชา', createdAt: serverTimestamp(), ...over }
+  }
+
+  // จอง = booking + locks + สลิป + audit ใน batch เดียว (เหมือน transaction ในแอป)
+  const slotBook = ({ uid = 'alice', stallId = 's1', id = 'sb1', slots = [keyOf('2026-10-17')], booking = {}, lockOver = {}, locks = slots, withSlip = true } = {}) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    const lastAuditId = addAudit(batch, db, uid, 'booking.create', id)
+    batch.set(doc(db, `bookings/${id}`), slotBookingDoc(uid, stallId, slots, { lastAuditId, ...booking }))
+    for (const k of locks) batch.set(doc(db, `bookingLocks/${lockId(stallId, k)}`), lockDoc(stallId, k, id, lockOver))
+    if (withSlip) batch.set(doc(db, `bookingSlips/${id}`), { tenantId: uid, marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
+    return batch.commit()
+  }
+
+  test('จอง 1 slot สำเร็จ และไม่แตะสถานะแผง', async () => {
+    await assertSucceeds(slotBook())
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await getDoc(doc(ctx.firestore(), `${STALL}/s1`))
+      assert.equal(snap.data().status, 'available')
+    })
+  })
+
+  test('จอง 7 slot ในครั้งเดียวสำเร็จ (ไม่เกินเพดานการอ่านเอกสารของ rules)', async () => {
+    const slots = ['10-17', '10-18', '10-19', '10-20', '10-21', '10-22', '10-23'].map(d => keyOf(`2026-${d}`))
+    await assertSucceeds(slotBook({ slots }))
+  })
+
+  test('จองเกิน 7 slot ไม่ผ่าน', async () => {
+    const slots = ['10-17', '10-18', '10-19', '10-20', '10-21', '10-22', '10-23', '10-24'].map(d => keyOf(`2026-${d}`))
+    await assertFails(slotBook({ slots }))
+  })
+
+  test('สองบัญชีจอง slot เดียวกัน ผ่านได้บัญชีเดียว', async () => {
+    await assertSucceeds(slotBook({ uid: 'alice', id: 'sa' }))
+    await assertFails(slotBook({ uid: 'bob', id: 'sb' }))
+  })
+
+  test('คนละวันแผงเดียวกัน ผ่านทั้งคู่', async () => {
+    await assertSucceeds(slotBook({ uid: 'alice', id: 'sa', slots: [keyOf('2026-10-17')] }))
+    await assertSucceeds(slotBook({ uid: 'bob', id: 'sb', slots: [keyOf('2026-10-18')] }))
+  })
+
+  test('คนละรอบวันเดียวกัน ผ่านทั้งคู่ แต่รอบเดียวกันไม่ผ่าน', async () => {
+    await assertSucceeds(slotBook({ uid: 'alice', id: 'sa', slots: [keyOf('2026-10-17', 'morning')] }))
+    await assertSucceeds(slotBook({ uid: 'bob', id: 'sb', slots: [keyOf('2026-10-17', 'evening')] }))
+    await assertFails(slotBook({ uid: 'carol', id: 'sc', slots: [keyOf('2026-10-17', 'morning')] }))
+  })
+
+  test('จองหลาย slot ที่มี slot หนึ่งถูกจองไปแล้ว ไม่ผ่านทั้งก้อน', async () => {
+    await assertSucceeds(slotBook({ uid: 'alice', id: 'sa', slots: [keyOf('2026-10-18')] }))
+    await assertFails(slotBook({ uid: 'bob', id: 'sb', slots: [keyOf('2026-10-17'), keyOf('2026-10-18')] }))
+    // ก้อนที่ล้มต้องไม่ทิ้ง lock ของวัน 17 ไว้
+    await assertSucceeds(slotBook({ uid: 'carol', id: 'sc', slots: [keyOf('2026-10-17')] }))
+  })
+
+  test('ปลอม totalAmount / pricePerSlot / amountDue ไม่ผ่าน', async () => {
+    await assertFails(slotBook({ booking: { totalAmount: 1, amountDue: 1 } }))
+    await assertFails(slotBook({ booking: { pricePerSlot: 1, totalAmount: 1, amountDue: 1 } }))
+    await assertFails(slotBook({ slots: [keyOf('2026-10-17'), keyOf('2026-10-18')], booking: { totalAmount: 500, amountDue: 500 } }))
+  })
+
+  test('slot ซ้ำกันในการจองเดียว หรือฟิลด์แปลกปลอม ไม่ผ่าน', async () => {
+    await assertFails(slotBook({ slots: [keyOf('2026-10-17'), keyOf('2026-10-17')], locks: [keyOf('2026-10-17')] }))
+    await assertFails(slotBook({ booking: { decidedBy: 'alice' } }))
+  })
+
+  test('จองโดยไม่สร้าง lock (หรือขาด lock บาง slot) ไม่ผ่าน', async () => {
+    await assertFails(slotBook({ locks: [] }))
+    await assertFails(slotBook({ slots: [keyOf('2026-10-17'), keyOf('2026-10-18')], locks: [keyOf('2026-10-17')] }))
+  })
+
+  test('สร้าง lock ชี้ booking ของคนอื่น หรือ slot ที่ไม่อยู่ในการจอง ไม่ผ่าน', async () => {
+    await assertSucceeds(slotBook({ uid: 'alice', id: 'sa', slots: [keyOf('2026-10-17')] }))
+    const db = tenant('bob')
+    const batch = writeBatch(db)
+    batch.set(doc(db, `bookingLocks/${lockId('s1', keyOf('2026-10-20'))}`), lockDoc('s1', keyOf('2026-10-20'), 'sa'))
+    await assertFails(batch.commit())
+    await assertFails(setDoc(doc(db, `bookingLocks/${lockId('s1', keyOf('2026-10-21'))}`), lockDoc('s1', keyOf('2026-10-21'), 'no-such')))
+  })
+
+  test('lock ที่ id / slotKey ไม่ตรงกัน หรือสถานะไม่ใช่ pending ไม่ผ่าน', async () => {
+    await assertFails(slotBook({ lockOver: { status: 'approved' } }))
+    await assertFails(slotBook({ lockOver: { slotKey: '2026-10-18_all' } }))
+    await assertFails(slotBook({ lockOver: { shopName: 'x'.repeat(61) } }))
+  })
+
+  test('แผงที่ปิด หรือถูกจองแบบเดิมอยู่ จองตาม slot ไม่ได้', async () => {
+    await assertFails(slotBook({ stallId: 's3' }))
+    await assertFails(slotBook({ stallId: 's2' }))
+  })
+
+  test('anonymous จองตาม slot ไม่ได้ และอ่าน lock ได้ทุกคน (รวมผู้ไม่ล็อกอิน)', async () => {
+    await assertSucceeds(slotBook())
+    await assertSucceeds(getDocs(query(collection(guest(), 'bookingLocks'), where('slotKey', '==', keyOf('2026-10-17')))))
+    await assertFails(slotBook({ uid: 'anon1', id: 'sx' }))
+  })
+
+  describe('หลังจอง', () => {
+    const decideSlot = (uid, patch, lockAction) => {
+      const db = tenant(uid)
+      const batch = writeBatch(db)
+      const lastAuditId = addAudit(batch, db, uid, DECISION_ACTION[patch.status], 'sb1')
+      batch.update(doc(db, 'bookings/sb1'), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId, ...patch })
+      if (lockAction === 'approve') batch.update(doc(db, `bookingLocks/${lockId('s1', keyOf('2026-10-17'))}`), { status: 'approved' })
+      if (lockAction === 'delete') batch.delete(doc(db, `bookingLocks/${lockId('s1', keyOf('2026-10-17'))}`))
+      return batch.commit()
+    }
+
+    test('admin อนุมัติ: booking approved + lock approved โดยไม่แตะแผง', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      await assertSucceeds(decideSlot('admin1', { status: 'approved' }, 'approve'))
+    })
+
+    test('admin ปฏิเสธ: ปล่อย lock แล้วคนอื่นจองต่อได้', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      await assertSucceeds(decideSlot('admin1', { status: 'rejected', statusReason: 'ยอดไม่ตรง' }, 'delete'))
+      await assertSucceeds(slotBook({ uid: 'bob', id: 'sb2' }))
+    })
+
+    test('ผู้เช่าอนุมัติ / แก้สถานะ lock เองไม่ได้', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      await assertFails(decideSlot('alice', { status: 'approved' }, 'approve'))
+      await assertFails(updateDoc(doc(tenant('alice'), `bookingLocks/${lockId('s1', keyOf('2026-10-17'))}`), { status: 'approved' }))
+    })
+
+    const cancelSlot = (uid, { deleteLocks = true, cancel = true } = {}) => {
+      const db = tenant(uid)
+      const batch = writeBatch(db)
+      if (cancel) {
+        const lastAuditId = addAudit(batch, db, uid, 'booking.cancel_self', 'sb1')
+        batch.update(doc(db, 'bookings/sb1'), { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId })
+      }
+      if (deleteLocks) batch.delete(doc(db, `bookingLocks/${lockId('s1', keyOf('2026-10-17'))}`))
+      return batch.commit()
+    }
+
+    test('ผู้เช่ายกเลิกการจองของตัวเอง + ปล่อย lock แล้วคนอื่นจอง slot นั้นได้', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      await assertSucceeds(cancelSlot('alice'))
+      await assertSucceeds(slotBook({ uid: 'bob', id: 'sb2' }))
+    })
+
+    test('ลบ lock โดยไม่ยกเลิกการจอง / ลบ lock ของคนอื่น ไม่ได้', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      await assertFails(cancelSlot('alice', { cancel: false }))
+      await assertFails(cancelSlot('bob', { cancel: false }))
+    })
+
+    test('ยกเลิกโดยไม่มี audit log ไม่ผ่าน', async () => {
+      await assertSucceeds(slotBook({ id: 'sb1' }))
+      const db = tenant('alice')
+      await assertFails(updateDoc(doc(db, 'bookings/sb1'), { status: 'cancelled', updatedAt: serverTimestamp() }))
+    })
+  })
+
+  describe('ตั้งค่าตลาด (markets/{id}.settings)', () => {
+    const settings = (over = {}) => ({ openWeekdays: [6, 0], maxAdvanceDays: 30, rounds: [{ id: 'morning', label: 'เช้า' }], ...over })
+
+    test('admin ตั้งค่าได้ ผู้เช่าตั้งค่าไม่ได้', async () => {
+      await assertSucceeds(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { settings: settings() }))
+      await assertFails(updateDoc(doc(tenant('alice'), 'markets/main-layout'), { settings: settings() }))
+    })
+
+    test('รอบเกิน 6 รอบ หรือ settings ไม่ใช่ map ไม่ผ่าน', async () => {
+      const rounds = Array.from({ length: 7 }, (_, i) => ({ id: `r${i}`, label: `รอบ ${i}` }))
+      await assertFails(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { settings: settings({ rounds }) }))
+      await assertFails(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { settings: 'x' }))
+    })
+
+    test('admin บันทึกผัง (ไม่แตะ settings) ยังผ่านเมื่อมี settings อยู่ และ settings ไม่หาย', async () => {
+      await assertSucceeds(updateDoc(doc(tenant('admin1'), 'markets/main-layout'), { settings: settings() }))
+      await assertSucceeds(setDoc(doc(tenant('admin1'), 'markets/main-layout'), { name: 'ตลาดใหม่', zones: [], updatedAt: 'x' }, { merge: true }))
+      const snap = await getDoc(doc(tenant('admin1'), 'markets/main-layout'))
+      assert.deepEqual(snap.data().settings.openWeekdays, [6, 0])
+    })
+  })
+})

@@ -46,7 +46,35 @@
           </div>
           <div class="text-right font-mono">
             <div class="text-xs text-slate-400 font-medium">อัตราค่าเช่า</div>
-            <div class="text-base font-bold text-emerald-700">฿{{ stall.price }}/วัน</div>
+            <div class="text-base font-bold text-emerald-700">฿{{ stall.price }}/{{ slotStore.rounds.length > 1 ? 'รอบ' : 'วัน' }}</div>
+          </div>
+        </div>
+
+        <!-- เลือกวัน / รอบ ที่ต้องการจอง (หลายช่องได้) -->
+        <div class="rounded-2xl border border-slate-200 p-3 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <label class="text-xs font-semibold text-slate-700">เลือกวันที่ต้องการจอง *</label>
+            <span class="text-[11px] text-slate-500 font-mono">เลือกแล้ว {{ selected.length }}/{{ maxSlots }}</span>
+          </div>
+          <p v-if="locksLoading" class="text-xs text-slate-500">กำลังตรวจวันที่ว่าง...</p>
+          <p v-else-if="locksError" class="text-xs text-rose-600">{{ locksError }}
+            <button type="button" class="underline font-semibold" @click="loadLocks">ลองใหม่</button></p>
+          <p v-if="!bookableDates.length" class="text-xs text-slate-500">ตอนนี้ยังไม่มีวันเปิดรับจอง</p>
+          <div class="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+            <div v-for="d in bookableDates" :key="d" class="flex items-center gap-2">
+              <span class="w-28 shrink-0 text-xs font-semibold text-slate-700">{{ formatThaiDate(d) }}</span>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="r in slotStore.rounds" :key="r.id" type="button"
+                  :disabled="!slotState(d, r.id).free"
+                  class="min-h-[44px] px-3 rounded-xl text-xs font-semibold border transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  :class="isSelected(d, r.id)
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : slotState(d, r.id).free ? 'bg-white text-slate-700 border-slate-300 hover:border-indigo-400' : 'bg-slate-100 text-slate-400 border-slate-200'"
+                  @click="toggle(d, r.id)"
+                >{{ slotStore.rounds.length > 1 ? r.label : 'จอง' }}<span v-if="slotState(d, r.id).note" class="ml-1 font-normal">· {{ slotState(d, r.id).note }}</span></button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -126,7 +154,8 @@
           <div class="pt-2">
             <div class="rounded-2xl bg-indigo-50 border border-indigo-200/80 p-3 mb-2 text-center">
               <div class="text-[11px] text-indigo-700 font-semibold">ยอดที่ต้องโอน</div>
-              <div class="text-2xl font-bold font-mono text-indigo-900">฿{{ stall.price }}</div>
+              <div class="text-2xl font-bold font-mono text-indigo-900">฿{{ totalAmount }}</div>
+              <div v-if="selected.length > 1" class="text-[11px] text-slate-600 font-mono">฿{{ stall.price }} × {{ selected.length }} ช่อง</div>
               <div class="text-[11px] text-slate-600 font-mono mt-0.5">PromptPay: 081-999-8888</div>
             </div>
             <label class="block text-xs font-semibold text-slate-800 mb-1.5">
@@ -194,7 +223,7 @@
         class="disabled:opacity-60 disabled:cursor-not-allowed px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-sm transition inline-flex items-center gap-1.5 active:scale-95"
       >
         <CheckCircle class="w-4 h-4" />
-        <span>{{ submitting ? 'กำลังส่ง...' : 'ส่งสลิปและจองแผง' }}</span>
+        <span>{{ submitting ? 'กำลังส่ง...' : selected.length ? `ส่งสลิปและจอง ${selected.length} ช่อง` : 'ส่งสลิปและจองแผง' }}</span>
       </button>
     </template>
   </BaseModal>
@@ -206,6 +235,9 @@ import { useMarketStore } from '../../stores/marketStore'
 import { useAuthStore } from '../../stores/authStore'
 import BaseModal from '../ui/BaseModal.vue'
 import { compressSlipImage } from '../../utils/compressImage'
+import { useSlotStore } from '../../stores/slotStore'
+import { canBookSlot, openDatesFrom, slotKey, formatSlotLabel } from '../../utils/marketCalendar'
+import { todayBangkok, formatThaiDate } from '../../utils/date'
 import { ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -216,6 +248,66 @@ const props = defineProps({
 const emit = defineEmits(['close', 'open-auth', 'need-profile'])
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
+const slotStore = useSlotStore()
+
+// ─── เลือกวัน/รอบ ───────────────────────────────────────────────────────────
+const selected = ref([]) // slotKey ที่เลือก
+const stallLocks = ref([])
+const locksLoading = ref(false)
+const locksError = ref('')
+
+const maxSlots = computed(() => slotStore.settings.maxSlotsPerBooking)
+const totalAmount = computed(() => (props.stall?.price || 0) * selected.value.length)
+const takenKeys = computed(() => new Set(stallLocks.value.map(l => l.slotKey)))
+const bookableDates = computed(() =>
+  openDatesFrom(slotStore.settings, todayBangkok(), slotStore.settings.maxAdvanceDays + 1))
+
+function slotState(date, roundId) {
+  const key = slotKey(date, roundId)
+  if (takenKeys.value.has(key)) return { free: false, note: 'จองแล้ว' }
+  const check = canBookSlot(slotStore.settings, key)
+  if (!check.ok) return { free: false, note: check.reason === 'ปิดรับจองรอบนี้แล้ว' ? 'ปิดรับ' : '' }
+  return { free: true, note: '' }
+}
+const isSelected = (date, roundId) => selected.value.includes(slotKey(date, roundId))
+
+function toggle(date, roundId) {
+  const key = slotKey(date, roundId)
+  if (selected.value.includes(key)) {
+    selected.value = selected.value.filter(k => k !== key)
+    return
+  }
+  if (selected.value.length >= maxSlots.value) {
+    validationError.value = `เลือกได้ไม่เกิน ${maxSlots.value} ช่องต่อการจอง`
+    return
+  }
+  validationError.value = ''
+  selected.value = [...selected.value, key].sort()
+}
+
+async function loadLocks() {
+  if (!props.stall) return
+  locksLoading.value = true
+  locksError.value = ''
+  try {
+    stallLocks.value = await slotStore.loadStallLocks(props.stall.id)
+  } catch (err) {
+    console.error('Load stall locks error:', err)
+    locksError.value = err?.code === 'failed-precondition' ? 'ดัชนีฐานข้อมูลยังสร้างไม่เสร็จ กรุณารอสักครู่' : 'ตรวจวันที่ว่างไม่สำเร็จ'
+  } finally {
+    locksLoading.value = false
+  }
+}
+
+// เปิดหน้าจอง: ติ๊กวัน/รอบที่เลือกอยู่บนผังไว้ให้ (ถ้าจองได้) และโหลดวันที่ว่างของแผงนี้
+watch(() => [props.isOpen, props.stall?.id], async ([open]) => {
+  if (!open || !props.stall) return
+  selected.value = []
+  stallLocks.value = []
+  await loadLocks()
+  const key = slotStore.selectedSlotKey
+  if (slotStore.selectedCheck.ok && !takenKeys.value.has(key)) selected.value = [key]
+}, { immediate: true })
 
 const slipPreview = ref('')
 const slipData = ref(null)
@@ -298,6 +390,11 @@ async function submitBooking() {
     return
   }
 
+  if (!selected.value.length) {
+    validationError.value = 'กรุณาเลือกวันที่ต้องการจองอย่างน้อย 1 ช่อง'
+    return
+  }
+
   if (!slipData.value) {
     validationError.value = 'กรุณาอัปโหลดสลิปหลักฐานการโอนเงิน'
     return
@@ -305,19 +402,42 @@ async function submitBooking() {
 
   if (!props.stall) return
 
+  // ตรวจปฏิทินอีกรอบตอนกดส่ง (เวลาอาจผ่านเส้นปิดรับจองระหว่างที่เปิดหน้าไว้)
+  for (const key of selected.value) {
+    const check = canBookSlot(slotStore.settings, key)
+    if (!check.ok) {
+      validationError.value = `${formatSlotLabel(slotStore.settings, key)}: ${check.reason}`
+      return
+    }
+  }
+
   const bookingPayload = {
     ...customer.value,
     tenantId: authStore.currentUser?.uid,
+    slots: selected.value,
     slip: slipData.value
   }
 
   submitting.value = true
   try {
-    const success = await marketStore.bookStall(props.stall.id, bookingPayload)
-    if (success) {
-      slipPreview.value = ''
-      slipData.value = null
-      emit('close')
+    await slotStore.book(props.stall.id, bookingPayload)
+    marketStore.showNotification(`ส่งการจองแผง ${props.stall.stallNo} (${selected.value.length} ช่อง) แล้ว รอผู้ดูแลตรวจสลิป`, 'success')
+    slipPreview.value = ''
+    slipData.value = null
+    selected.value = []
+    emit('close')
+  } catch (err) {
+    console.error('Booking Error:', err)
+    if (err.code === 'slot-taken') {
+      const labels = err.slots.map(k => formatSlotLabel(slotStore.settings, k)).join(', ')
+      validationError.value = `มีคนจองช่องนี้ไปแล้ว: ${labels} กรุณาเลือกใหม่`
+      selected.value = selected.value.filter(k => !err.slots.includes(k))
+      await loadLocks()
+    } else if (err.code === 'permission-denied') {
+      validationError.value = 'จองไม่ได้ (อาจมีคนจองช่องนี้ไปก่อน หรือระบบเพิ่งอัปเดต) กรุณารีเฟรชหน้าแล้วลองใหม่'
+      await loadLocks()
+    } else {
+      validationError.value = err.message || 'เกิดข้อผิดพลาดในการจองแผงค้า'
     }
   } finally {
     submitting.value = false

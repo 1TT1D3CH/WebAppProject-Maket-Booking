@@ -39,6 +39,9 @@
 
         <dl class="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 text-sm">
           <div class="row"><dt>แผง / โซน</dt><dd>{{ booking.stallNo || '-' }} · {{ zoneName }}</dd></div>
+          <div v-if="booking.slots?.length" class="row"><dt>วันที่จอง ({{ booking.slots.length }} ช่อง)</dt><dd>{{ slotText }}</dd></div>
+          <div v-else class="row"><dt>วันที่จอง</dt><dd>การจองแบบเดิม (ไม่ระบุวัน)</dd></div>
+          <div v-if="booking.slots?.length" class="row"><dt>ราคา/ช่อง</dt><dd>฿{{ booking.pricePerSlot }}</dd></div>
           <div class="row"><dt>ผู้เช่า</dt><dd>{{ booking.customerName }}</dd></div>
           <div class="row"><dt>เบอร์โทร</dt><dd><a :href="`tel:${booking.customerPhone}`" class="text-indigo-600 dark:text-indigo-400 underline font-mono">{{ booking.customerPhone }}</a></dd></div>
           <div class="row"><dt>สินค้า</dt><dd>{{ booking.goodsType || '-' }}</dd></div>
@@ -106,6 +109,8 @@ import { useMarketStore } from '../../../stores/marketStore'
 import { useAuthStore } from '../../../stores/authStore'
 import { useBreakpoint } from '../../../composables/useBreakpoint'
 import { formatThaiDateTime } from '../../../utils/date'
+import { useSlotStore } from '../../../stores/slotStore'
+import { formatSlotsSummary } from '../../../utils/marketCalendar'
 import { isShortcutBlocked } from '../../../utils/keyboard'
 
 const props = defineProps({
@@ -118,6 +123,8 @@ const props = defineProps({
 const emit = defineEmits(['back', 'prev', 'next', 'open', 'decided'])
 
 const store = useSlipReviewStore()
+const slotStore = useSlotStore()
+const slotText = computed(() => formatSlotsSummary(slotStore.settings, props.booking.slots))
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const { isDesktop } = useBreakpoint()

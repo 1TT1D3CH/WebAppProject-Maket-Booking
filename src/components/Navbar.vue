@@ -217,6 +217,16 @@
             <span>{{ marketStore.marketWidthMeters }}×{{ marketStore.marketHeightMeters }}ม.</span>
           </button>
 
+          <!-- Secondary Ghost Button: ตั้งค่าการจอง (วัน/รอบตลาด) -->
+          <button
+            @click="$emit('open-booking-settings')"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-emerald-700 dark:text-emerald-400 text-xs font-semibold rounded-xl border border-slate-200/90 dark:border-slate-800 transition shadow-xs"
+            title="ตั้งค่าวัน/รอบตลาดและกติกาการจอง"
+          >
+            <CalendarDays class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span class="hidden sm:inline whitespace-nowrap">ตั้งค่าการจอง</span>
+          </button>
+
           <!-- Secondary Ghost Button: Zone Manager -->
           <button
             @click="$emit('open-zone-manager')"
@@ -296,6 +306,7 @@ import {
   Users,
   ReceiptText,
   History,
+  CalendarDays,
   ClipboardList,
   Maximize2,
   Bell,
@@ -314,6 +325,7 @@ defineEmits([
   'open-zone-manager', 
   'open-firebase-config', 
   'open-market-settings',
+  'open-booking-settings',
   'open-auth',
   'open-notifications'
 ])

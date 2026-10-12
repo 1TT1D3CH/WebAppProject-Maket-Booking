@@ -5,6 +5,7 @@
     <Navbar 
       @open-zone-manager="isZoneManagerOpen = true"
       @open-market-settings="isMarketSettingsOpen = true"
+      @open-booking-settings="isBookingSettingsOpen = true"
       @open-firebase-config="isFirebaseConfigOpen = true"
       @open-auth="isAuthOpen = true"
       @open-notifications="isNotificationsOpen = true"
@@ -58,6 +59,11 @@
     <MarketSettingsModal 
       :is-open="isMarketSettingsOpen"
       @close="isMarketSettingsOpen = false"
+    />
+
+    <BookingSettingsModal
+      :is-open="isBookingSettingsOpen"
+      @close="isBookingSettingsOpen = false"
     />
 
     <BookingModal 
@@ -149,6 +155,8 @@ import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
 import MembersPanel from './components/Admin/MembersPanel.vue'
 import SlipReviewPanel from './components/Admin/SlipReviewPanel.vue'
 import AuditLogPanel from './components/Admin/AuditLogPanel.vue'
+import BookingSettingsModal from './components/Admin/BookingSettingsModal.vue'
+import { useSlotStore } from './stores/slotStore'
 import MyBookingsModal from './components/Customer/MyBookingsModal.vue'
 import { useMyBookingsStore } from './stores/myBookingsStore'
 import { useSlipReviewStore } from './stores/slipReviewStore'
@@ -160,6 +168,7 @@ const isStallEditorOpen = ref(false)
 const isObjectEditorOpen = ref(false)
 const isZoneManagerOpen = ref(false)
 const isMarketSettingsOpen = ref(false)
+const isBookingSettingsOpen = ref(false)
 const isBookingModalOpen = ref(false)
 const isFirebaseConfigOpen = ref(false)
 const isAuthOpen = ref(false)
@@ -187,6 +196,7 @@ onMounted(() => {
   window.addEventListener('beforeunload', warnUnsavedLayout)
   authStore.initAuth()
   marketStore.initFirebaseSync()
+  useSlotStore().startSettings() // ตั้งค่าตลาด (วัน/รอบ) ใช้ทั้งหน้าลูกค้า หน้าจอง การจองของฉัน และ admin
 
   // กลับมาจาก signInWithRedirect (ใช้เมื่อ popup ถูกบล็อก)
   authStore.completeRedirectSignIn().then((res) => {

@@ -34,7 +34,14 @@ service cloud.firestore {
     // แผงค้าแยกเป็น markets/{id}/stalls/{stallId} ผู้เช่าไม่มีสิทธิ์แก้เอกสารผังเลย
     match /markets/{marketId} {
       allow read: if true; // ลูกค้าและคนทั่วไปอ่านผังตลาดได้
-      allow create, update, delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      // ตั้งค่าตลาด (markets/{id}.settings): แก้ได้เฉพาะ admin ตรวจชนิดและจำนวนรอบ (ไม่เกิน 6)
+      allow update: if isAdmin()
+        && (!('settings' in request.resource.data)
+            || (request.resource.data.settings is map
+                && (!('rounds' in request.resource.data.settings)
+                    || (request.resource.data.settings.rounds is list
+                        && request.resource.data.settings.rounds.size() <= 6))));
 
       // แผงค้ารายแผง
       // - อ่าน: ทุกคน (ไม่มีข้อมูลส่วนบุคคล; bookedBy มี tenantId/bookedAt/bookingId + ชื่อร้าน/ประเภทสินค้า ไม่มีชื่อจริง/เบอร์โทร)
@@ -125,7 +132,7 @@ service cloud.firestore {
         && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuditId'])
         && auditNewFor(bookingId, ['booking.cancel_self'])
         && d.updatedAt == request.time
-        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId)).data.status == 'available';
+        && ('slots' in r || getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId)).data.status == 'available');
     }
 
     function isValidDecision(bookingId) {
@@ -140,18 +147,12 @@ service cloud.firestore {
         && d.decidedAt == request.time
         && (d.status == 'approved'
             || (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300))
-        && getAfter(stallPath).data.status == (d.status == 'approved' ? 'booked' : (d.status == 'rejected' ? 'available' : 'pending'));
+        && ('slots' in r || getAfter(stallPath).data.status == (d.status == 'approved' ? 'booked' : (d.status == 'rejected' ? 'available' : 'pending')));
     }
 
-    // ─── Bookings (Customer Transaction History) ─────────────────────────────
-    // มีชื่อ/เบอร์โทร -> อ่านได้เฉพาะเจ้าของรายการและ admin
-    // สร้างได้ต่อเมื่อแผงนั้นถูกจองในชื่อตัวเองในคำสั่งเขียนเดียวกัน (transaction) กันสร้างรายการปลอม
-    match /bookings/{bookingId} {
-      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
-      allow create: if isNotAnonymous()
-        && request.resource.data.tenantId == request.auth.uid
-        && request.resource.data.stallId is string
-        && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.tenantId == request.auth.uid
+    // ─── การจองแบบเดิม (กันแผงด้วย stall.status ไม่มีวันที่) ─────────────────────
+    function legacyBookingCreate(bookingId) {
+      return getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.tenantId == request.auth.uid
         && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.bookedBy.bookingId == bookingId
         && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.status == 'pending'
         // การจองใหม่ต้องรอตรวจสลิป ยอดต้องตรงราคาแผงจริง และต้องแนบสลิปในคำสั่งเขียนเดียวกัน
@@ -164,6 +165,56 @@ service cloud.firestore {
              'shopName', 'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status', 'lastAuditId'])
         && auditLinked(bookingId, ['booking.create'])
         && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
+    }
+
+    // ─── การจองตามวัน/รอบ (slot) ─────────────────────────────────────────────
+    // booking + bookingLocks ทุก slot + สลิป + audit log ต้องอยู่ในคำสั่งเขียนเดียวกัน
+    // ปฏิทินตลาด (วันเปิด/ปิด จองล่วงหน้า เวลาปิดรับ) ตรวจที่ client ไม่ได้อยู่ใน rules
+    function slotLockPath(stallId, slotKey) {
+      return /databases/$(database)/documents/bookingLocks/$(stallId + '_' + slotKey);
+    }
+
+    // lock ของ slot ลำดับที่ i ต้องมีอยู่ และชี้มาที่การจองนี้
+    function slotLockOk(d, bookingId, i) {
+      return d.slots.size() <= i
+        || getAfter(slotLockPath(d.stallId, d.slots[i])).data.bookingId == bookingId;
+    }
+
+    function slotBookingCreate(bookingId) {
+      let d = request.resource.data;
+      let stall = get(/databases/$(database)/documents/markets/main-layout/stalls/$(d.stallId)).data;
+      return d.slots is list
+        && d.slots.size() >= 1 && d.slots.size() <= 7
+        && d.slots.toSet().size() == d.slots.size()
+        && stall.status == 'available'
+        && d.pricePerSlot == stall.price
+        && d.totalAmount == d.pricePerSlot * d.slots.size()
+        && d.amountDue == d.totalAmount
+        && d.firstDate == d.slots[0].split('_')[0]
+        && d.lastDate == d.slots[d.slots.size() - 1].split('_')[0]
+        && d.status == 'pending'
+        && d.createdAt == request.time
+        && d.slipUploadedAt == request.time
+        && d.slipHash is string
+        && d.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone', 'shopName', 'goodsType',
+             'slots', 'firstDate', 'lastDate', 'pricePerSlot', 'totalAmount', 'amountDue',
+             'slipHash', 'slipUploadedAt', 'createdAt', 'status', 'lastAuditId'])
+        && auditLinked(bookingId, ['booking.create'])
+        && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId))
+        && slotLockOk(d, bookingId, 0) && slotLockOk(d, bookingId, 1) && slotLockOk(d, bookingId, 2)
+        && slotLockOk(d, bookingId, 3) && slotLockOk(d, bookingId, 4) && slotLockOk(d, bookingId, 5)
+        && slotLockOk(d, bookingId, 6);
+    }
+
+    // ─── Bookings (Customer Transaction History) ─────────────────────────────
+    // มีชื่อ/เบอร์โทร -> อ่านได้เฉพาะเจ้าของรายการและ admin
+    // สร้างได้ต่อเมื่อแผงนั้นถูกจองในชื่อตัวเองในคำสั่งเขียนเดียวกัน (transaction) กันสร้างรายการปลอม
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
+      allow create: if isNotAnonymous()
+        && request.resource.data.tenantId == request.auth.uid
+        && request.resource.data.stallId is string
+        && ('slots' in request.resource.data ? slotBookingCreate(bookingId) : legacyBookingCreate(bookingId));
       // admin/owner ตัดสินได้เฉพาะ pending -> approved / needs_slip / rejected (และ needs_slip -> rejected)
       // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน
       allow update: if (isAdmin() && isValidDecision(bookingId))
@@ -171,6 +222,37 @@ service cloud.firestore {
         || isTenantCancel(bookingId);
       // ลบได้เฉพาะรายการที่ปฏิเสธ/ยกเลิกแล้ว (แผงถูกปล่อยไปแล้ว) ไม่ลบการจองที่อนุมัติ เพราะแผงยังเป็นของผู้เช่า
       allow delete: if isAdmin() && resource.data.status in ['rejected', 'cancelled'];
+    }
+
+    // ─── Booking Locks (กันจองซ้ำรายวัน/รอบ) ─────────────────────────────────
+    // id = {stallId}_{slotKey} สร้างได้อย่างเดียว (มีแล้วสร้างซ้ำไม่ได้ = จองซ้ำไม่ได้)
+    // ไม่มีข้อมูลส่วนตัว (มีแค่ชื่อร้าน/ประเภทสินค้าที่ผู้จองเปิดเผยให้ลูกค้าอื่นเห็น) อ่านได้ทุกคน
+    // เปลี่ยนสถานะ/ลบ: admin; ผู้เช่าลบได้เฉพาะตอนยกเลิกการจองของตัวเองในคำสั่งเดียวกัน
+    match /bookingLocks/{lockId} {
+      allow read: if true;
+      allow create: if isNotAnonymous()
+        && request.resource.data.keys().hasOnly(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId',
+             'status', 'shopName', 'goodsType', 'createdAt'])
+        && request.resource.data.keys().hasAll(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId', 'status', 'createdAt'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.slotKey is string
+        && request.resource.data.slotKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}_[a-z0-9]{1,20}$')
+        && request.resource.data.slotKey == request.resource.data.date + '_' + request.resource.data.roundId
+        && lockId == request.resource.data.stallId + '_' + request.resource.data.slotKey
+        && request.resource.data.createdAt == request.time
+        && (!('shopName' in request.resource.data)
+            || (request.resource.data.shopName is string && request.resource.data.shopName.size() <= 60))
+        && (!('goodsType' in request.resource.data)
+            || (request.resource.data.goodsType is string && request.resource.data.goodsType.size() <= 60))
+        && get(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.status == 'available'
+        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.tenantId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.stallId == request.resource.data.stallId
+        && request.resource.data.slotKey in getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.slots;
+      allow update: if isAdmin();
+      allow delete: if isAdmin()
+        || (isNotAnonymous()
+            && get(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.tenantId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status == 'cancelled');
     }
 
     // ─── Booking Slips (รูปสลิป แยกจาก bookings เพื่อไม่ให้รายการจองหนัก) ───────

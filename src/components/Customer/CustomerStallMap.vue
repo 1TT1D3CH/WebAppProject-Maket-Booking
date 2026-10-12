@@ -64,6 +64,9 @@
       </div>
     </div>
 
+    <!-- เลือกวัน / รอบ ที่จะดูสถานะแผง -->
+    <DayRoundBar />
+
     <!-- Customer Interactive Canvas Area with Dynamic Dot-Grid Background -->
     <div 
       class="flex-1 relative overflow-auto p-4 sm:p-6 transition-colors duration-300"
@@ -143,7 +146,7 @@
 
         <!-- ─── STALL INTERACTIVE CARDS (ตัววาดกลาง StallView ใช้ร่วมกับ Admin Builder) ─── -->
         <StallView
-          v-for="stall in marketStore.pubFilteredStalls"
+          v-for="stall in displayStalls"
           :key="stall.id"
           :stall="stall"
           :zone="marketStore.pubZoneById(stall.zoneId)"
@@ -180,7 +183,7 @@
               </span>
             </div>
             <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              อัตราค่าเช่า: <strong class="text-emerald-700 dark:text-emerald-400 font-mono text-sm font-bold">฿{{ selectedStall.price }}</strong> / วัน 
+              อัตราค่าเช่า: <strong class="text-emerald-700 dark:text-emerald-400 font-mono text-sm font-bold">฿{{ selectedStall.price }}</strong> / {{ slots.rounds.length > 1 ? 'รอบ' : 'วัน' }} 
               <span v-if="selectedStall.notes" class="ml-2 text-slate-500 dark:text-slate-400 font-normal">({{ selectedStall.notes }})</span>
             </p>
             <!-- แผงที่มีผู้จอง: บอกแค่ชื่อร้านกับประเภทสินค้า (ไม่แสดงชื่อจริง/เบอร์โทร) -->
@@ -204,7 +207,7 @@
           </button>
 
           <button 
-            v-if="selectedStall.status === 'available'"
+            v-if="selectedStall.status === 'available' && slots.selectedCheck.ok"
             @click="$emit('open-booking-modal', selectedStall)"
             class="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 dark:shadow-none transition-all duration-150 active:scale-95 flex items-center justify-center gap-2 text-xs sm:text-sm"
           >
@@ -212,6 +215,9 @@
             <span>ดำเนินการจองแผงนี้</span>
           </button>
 
+          <span v-else-if="selectedStall.status === 'available'" class="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-medium">
+            จองช่องนี้ไม่ได้ ({{ slots.selectedCheck.reason }}) เลือกวันอื่นบนแถบด้านบน
+          </span>
           <span v-else class="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-medium">
             แผงนี้ไม่สามารถจองได้ ({{ selectedStall.status === 'booked' ? 'มีผู้จองแล้ว' : selectedStall.status === 'pending' ? 'รอตรวจสลิป' : 'ปิดใช้งาน' }})
           </span>
@@ -224,9 +230,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useMarketStore } from '../../stores/marketStore'
+import { useSlotStore } from '../../stores/slotStore'
 import StallView from '../shared/StallView.vue'
+import DayRoundBar from './DayRoundBar.vue'
 import { 
   Search, 
   ShoppingBag, 
@@ -244,10 +252,35 @@ import {
 
 const emit = defineEmits(['open-booking-modal'])
 const marketStore = useMarketStore()
+const slots = useSlotStore()
 const selectedCustomerStallId = ref(null)
 
+onMounted(() => {
+  slots.startSettings()
+  slots.startLocks()
+})
+onBeforeUnmount(() => slots.stopLocks())
+
+// สถานะแผงของ "วัน/รอบที่เลือก": ปิดโดย admin หรือถูกจองแบบเดิม (stall.status) ชนะเสมอ
+// นอกนั้นดูจาก bookingLocks ของช่องนี้ (ไม่แก้ข้อมูลแผงใน store)
+function withSlotStatus(stall) {
+  if (stall.status !== 'available') return stall
+  const lock = slots.lockByStall[stall.id]
+  if (!lock) return stall
+  return {
+    ...stall,
+    status: lock.status === 'approved' ? 'booked' : 'pending',
+    bookedBy: { shopName: lock.shopName || '', goodsType: lock.goodsType || '' }
+  }
+}
+
+const displayStalls = computed(() => marketStore.pubFilteredStalls
+  .map(withSlotStatus)
+  .filter(st => marketStore.filterStatus === 'all' || st.status === marketStore.filterStatus))
+
 const selectedStall = computed(() => {
-  return marketStore.pub.stalls.find(s => s.id === selectedCustomerStallId.value)
+  const stall = marketStore.pub.stalls.find(s => s.id === selectedCustomerStallId.value)
+  return stall ? withSlotStatus(stall) : undefined
 })
 
 const selectedStallMetrics = computed(() => {

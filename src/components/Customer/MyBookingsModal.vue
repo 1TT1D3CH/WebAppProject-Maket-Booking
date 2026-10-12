@@ -19,6 +19,8 @@
           <div class="min-w-0">
             <div class="font-bold text-slate-900 dark:text-white">แผง {{ b.stallNo || '-' }}</div>
             <div class="text-xs text-slate-500 dark:text-slate-400">{{ zoneOf(b) }} · จองเมื่อ {{ timeOf(b) }}</div>
+            <div v-if="b.slots?.length" class="text-xs font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">วันที่จอง: {{ slotText(b) }}</div>
+            <div v-else class="text-[11px] text-slate-400 mt-0.5">การจองแบบเดิม (ไม่ระบุวัน)</div>
           </div>
           <div class="text-right shrink-0">
             <div class="font-mono font-bold text-indigo-700 dark:text-indigo-300">฿{{ b.amountDue ?? '-' }}</div>
@@ -86,6 +88,11 @@ import { useAuthStore } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
 import { compressSlipImage } from '../../utils/compressImage'
 import { formatThaiDateTime } from '../../utils/date'
+import { useSlotStore } from '../../stores/slotStore'
+import { formatSlotsSummary } from '../../utils/marketCalendar'
+
+const slotStore = useSlotStore()
+const slotText = (b) => formatSlotsSummary(slotStore.settings, b.slots)
 
 const props = defineProps({ isOpen: Boolean })
 defineEmits(['close'])

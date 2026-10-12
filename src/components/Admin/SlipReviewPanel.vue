@@ -47,7 +47,7 @@
             <span class="font-mono font-bold text-sm text-indigo-700 dark:text-indigo-300 shrink-0">฿{{ b.amountDue ?? '-' }}</span>
           </div>
           <div class="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            <span class="truncate">{{ b.customerPhone }} · {{ timeOf(b) }}</span>
+            <span class="truncate">{{ b.customerPhone }} · {{ timeOf(b) }}<template v-if="b.slots?.length"> · วันที่ {{ slotText(b) }}</template></span>
             <span class="shrink-0 font-semibold" :class="badgeClass(b.status)">{{ STATUS_LABEL[b.status] || b.status }}</span>
           </div>
         </button>
@@ -80,6 +80,11 @@ import SlipReviewDetail from './slip/SlipReviewDetail.vue'
 import { useSlipReviewStore } from '../../stores/slipReviewStore'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { formatThaiDateTime } from '../../utils/date'
+import { useSlotStore } from '../../stores/slotStore'
+import { formatSlotsSummary } from '../../utils/marketCalendar'
+
+const slotStore = useSlotStore()
+const slotText = (b) => formatSlotsSummary(slotStore.settings, b.slots)
 import { useAuthStore } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
 
