@@ -49,7 +49,9 @@
           <div v-if="booking.statusReason" class="row"><dt>เหตุผล</dt><dd>{{ booking.statusReason }}</dd></div>
         </dl>
 
-        <BookingAuditHistory :booking-id="booking.id" :refresh-key="booking.status" />
+        <AdminCancelPanel v-if="showCancelPanel" :booking="booking" @done="$emit('decided')" />
+
+        <BookingAuditHistory :booking-id="booking.id" :refresh-key="booking.status + (booking.refund?.status || '')" />
 
         <div v-if="canDecide" class="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1">
           <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">ตรวจด้วยตา (ไม่บันทึก)</div>
@@ -104,6 +106,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ArrowLeft, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-vue-next'
 import SlipImageViewer from './SlipImageViewer.vue'
 import BookingAuditHistory from './BookingAuditHistory.vue'
+import AdminCancelPanel from './AdminCancelPanel.vue'
 import { useSlipReviewStore } from '../../../stores/slipReviewStore'
 import { useMarketStore } from '../../../stores/marketStore'
 import { useAuthStore } from '../../../stores/authStore'
@@ -145,9 +148,14 @@ const quickReasons = computed(() => reasonMode.value === 'rejected'
   ? ['ยอดไม่ตรงและไม่ได้รับเงิน', 'ไม่ใช่สลิปที่ถูกต้อง', 'สลิปซ้ำกับการจองอื่น']
   : ['ยอดไม่ตรง', 'รูปไม่ชัด', 'ไม่ใช่สลิปของการจองนี้'])
 
-const STATUS_LABEL = { pending: 'รอตรวจสลิป', needs_slip: 'รอผู้เช่าส่งสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว' }
+const STATUS_LABEL = {
+  pending: 'รอตรวจสลิป', needs_slip: 'รอผู้เช่าส่งสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว',
+  awaiting_slip: 'กันแผงรอผู้เช่าส่งสลิป', cancel_requested: 'ผู้เช่าขอยกเลิก', cancelled: 'ยกเลิกแล้ว', expired: 'หมดเวลา'
+}
 const statusLabel = computed(() => STATUS_LABEL[props.booking.status] || props.booking.status)
 const canDecide = computed(() => props.booking.status === 'pending' || props.booking.status === 'needs_slip')
+// ยกเลิก/คืนเงิน/ใบเสร็จ: การจองที่อนุมัติแล้ว ขอยกเลิก หรือยกเลิกแล้วที่มียอดคืน
+const showCancelPanel = computed(() => ['approved', 'cancel_requested'].includes(props.booking.status) || (props.booking.status === 'cancelled' && !!props.booking.refund))
 const createdText = computed(() => {
   const t = props.booking.createdAt
   return t?.toDate ? formatThaiDateTime(t.toDate()) : '-'

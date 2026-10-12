@@ -159,7 +159,7 @@
               <div class="text-[11px] text-slate-600 font-mono mt-0.5">PromptPay: 081-999-8888</div>
             </div>
             <label class="block text-xs font-semibold text-slate-800 mb-1.5">
-              💳 แนบสลิปโอนเงินค่าเช่า *
+              💳 แนบสลิปโอนเงินค่าเช่า (แนบทีหลังได้ภายใน {{ holdMinutes }} นาที)
             </label>
 
             <div 
@@ -202,7 +202,8 @@
         <div class="bg-indigo-50 border border-indigo-200/80 rounded-xl p-2.5 flex items-start gap-2 text-[11px] text-indigo-900 font-medium">
           <ShieldCheck class="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
           <p>
-            หลังส่งสลิป แผงจะถูกกันไว้ให้คุณระหว่างรอผู้ดูแลตรวจสลิป ติดตามผลได้ภายหลัง
+            <template v-if="slipData">หลังส่งสลิป แผงจะถูกกันไว้ให้คุณระหว่างรอผู้ดูแลตรวจสลิป ติดตามผลได้ภายหลัง</template>
+            <template v-else>ถ้ายังไม่แนบสลิป ระบบจะกันแผงไว้ให้ {{ holdMinutes }} นาที แนบสลิปได้ที่ "การจองของฉัน" เกินเวลาแล้วแผงจะว่างให้คนอื่นจอง</template>
           </p>
         </div>
 
@@ -223,7 +224,7 @@
         class="disabled:opacity-60 disabled:cursor-not-allowed px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 text-sm transition inline-flex items-center gap-1.5 active:scale-95"
       >
         <CheckCircle class="w-4 h-4" />
-        <span>{{ submitting ? 'กำลังส่ง...' : selected.length ? `ส่งสลิปและจอง ${selected.length} ช่อง` : 'ส่งสลิปและจองแผง' }}</span>
+        <span>{{ submitting ? 'กำลังส่ง...' : !selected.length ? 'จองแผง' : slipData ? `ส่งสลิปและจอง ${selected.length} ช่อง` : `จอง ${selected.length} ช่องและไปชำระเงิน` }}</span>
       </button>
     </template>
   </BaseModal>
@@ -236,7 +237,11 @@ import { useAuthStore } from '../../stores/authStore'
 import BaseModal from '../ui/BaseModal.vue'
 import { compressSlipImage } from '../../utils/compressImage'
 import { useSlotStore } from '../../stores/slotStore'
+import { useMyBookingsStore } from '../../stores/myBookingsStore'
 import { canBookSlot, openDatesFrom, slotKey, formatSlotLabel } from '../../utils/marketCalendar'
+import { isHoldExpired } from '../../utils/holdTimer'
+import { serverNow, calibrateServerClock } from '../../utils/serverClock'
+import { fetchBooking } from '../../services/firebaseService'
 import { todayBangkok, formatThaiDate } from '../../utils/date'
 import { ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
 
@@ -245,10 +250,12 @@ const props = defineProps({
   stall: Object
 })
 
-const emit = defineEmits(['close', 'open-auth', 'need-profile'])
+const emit = defineEmits(['close', 'open-auth', 'need-profile', 'open-my-bookings'])
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const slotStore = useSlotStore()
+const myBookings = useMyBookingsStore()
+const MAX_HOLDS = 2
 
 // ─── เลือกวัน/รอบ ───────────────────────────────────────────────────────────
 const selected = ref([]) // slotKey ที่เลือก
@@ -258,7 +265,9 @@ const locksError = ref('')
 
 const maxSlots = computed(() => slotStore.settings.maxSlotsPerBooking)
 const totalAmount = computed(() => (props.stall?.price || 0) * selected.value.length)
-const takenKeys = computed(() => new Set(stallLocks.value.map(l => l.slotKey)))
+const holdMinutes = computed(() => slotStore.settings.paymentHoldMinutes)
+// lock ที่รอสลิปและหมดเวลาแล้วถือว่าว่าง จองทับได้
+const takenKeys = computed(() => new Set(stallLocks.value.filter(l => !isHoldExpired(l, serverNow())).map(l => l.slotKey)))
 const bookableDates = computed(() =>
   openDatesFrom(slotStore.settings, todayBangkok(), slotStore.settings.maxAdvanceDays + 1))
 
@@ -395,12 +404,16 @@ async function submitBooking() {
     return
   }
 
-  if (!slipData.value) {
-    validationError.value = 'กรุณาอัปโหลดสลิปหลักฐานการโอนเงิน'
-    return
-  }
-
   if (!props.stall) return
+
+  // กันแผงรอสลิปค้างได้ไม่เกิน 2 รายการพร้อมกัน (ตรวจที่ client; rules ตรวจนับจำนวนไม่ได้)
+  if (!slipData.value) {
+    const holding = myBookings.items.filter(b => b.status === 'awaiting_slip' && !isHoldExpired(b, serverNow())).length
+    if (holding >= MAX_HOLDS) {
+      validationError.value = `มีการจองที่กันแผงรอชำระเงินอยู่ ${holding} รายการแล้ว (สูงสุด ${MAX_HOLDS}) กรุณาแนบสลิปหรือยกเลิกรายการเดิมก่อน หรือแนบสลิปตอนจองเลย`
+      return
+    }
+  }
 
   // ตรวจปฏิทินอีกรอบตอนกดส่ง (เวลาอาจผ่านเส้นปิดรับจองระหว่างที่เปิดหน้าไว้)
   for (const key of selected.value) {
@@ -415,13 +428,24 @@ async function submitBooking() {
     ...customer.value,
     tenantId: authStore.currentUser?.uid,
     slots: selected.value,
-    slip: slipData.value
+    slip: slipData.value,
+    holdMinutes: holdMinutes.value
   }
 
   submitting.value = true
   try {
-    await slotStore.book(props.stall.id, bookingPayload)
-    marketStore.showNotification(`ส่งการจองแผง ${props.stall.stallNo} (${selected.value.length} ช่อง) แล้ว รอผู้ดูแลตรวจสลิป`, 'success')
+    const before = Date.now()
+    const { bookingId, status } = await slotStore.book(props.stall.id, bookingPayload)
+    if (status === 'awaiting_slip') {
+      // เทียบเวลา server กับนาฬิกาเครื่อง เพื่อให้นับถอยหลังตรงกับที่ rules ตัดสิน
+      const after = Date.now()
+      const saved = await fetchBooking(bookingId)
+      if (saved?.holdStartedAt?.toMillis) calibrateServerClock(saved.holdStartedAt.toMillis(), before, after)
+      marketStore.showNotification(`กันแผง ${props.stall.stallNo} ไว้ให้ ${holdMinutes.value} นาที กรุณาแนบสลิปที่ "การจองของฉัน"`, 'success')
+      emit('open-my-bookings')
+    } else {
+      marketStore.showNotification(`ส่งการจองแผง ${props.stall.stallNo} (${selected.value.length} ช่อง) แล้ว รอผู้ดูแลตรวจสลิป`, 'success')
+    }
     slipPreview.value = ''
     slipData.value = null
     selected.value = []
@@ -434,7 +458,7 @@ async function submitBooking() {
       selected.value = selected.value.filter(k => !err.slots.includes(k))
       await loadLocks()
     } else if (err.code === 'permission-denied') {
-      validationError.value = 'จองไม่ได้ (อาจมีคนจองช่องนี้ไปก่อน หรือระบบเพิ่งอัปเดต) กรุณารีเฟรชหน้าแล้วลองใหม่'
+      validationError.value = 'จองไม่ได้ (อาจมีคนจองช่องนี้ไปก่อน, ช่องนี้เพิ่งหมดเวลากันแผงและยังถูกกันอยู่อีกไม่กี่วินาที, หรือระบบเพิ่งอัปเดต) ลองใหม่อีกครั้งในอีกสักครู่ หากยังไม่ได้ให้รีเฟรชหน้า'
       await loadLocks()
     } else {
       validationError.value = err.message || 'เกิดข้อผิดพลาดในการจองแผงค้า'

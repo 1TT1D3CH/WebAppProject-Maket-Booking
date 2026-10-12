@@ -6,6 +6,11 @@ import {
   isMarketOpen, DEFAULT_ROUND_ID
 } from '../utils/marketCalendar'
 import { todayBangkok, addDays, isDateKey } from '../utils/date'
+import { isHoldExpired, HOLD_STATUSES, holdExpiresAtMs } from '../utils/holdTimer'
+import { serverNow } from '../utils/serverClock'
+
+// ตัวเดียวทั้งหน้า: ปลุกตอน lock ที่ใกล้หมดเวลาที่สุดหมดอายุ แล้ววาดสีแผงใหม่ (ไม่ใช่ timer ต่อแผง)
+let expiryTimer = null
 
 // วัน/รอบที่เลือกเก็บใน query ของ URL (?date=2026-10-17&round=morning) ไม่ใช้ router
 function readUrlSelection() {
@@ -37,6 +42,7 @@ export const useSlotStore = defineStore('slots', {
     locks: [], // lock ของช่องที่เลือก
     locksLoaded: false,
     locksError: '',
+    nowMs: serverNow(),
     unsubSettings: null,
     unsubLocks: null
   }),
@@ -50,7 +56,10 @@ export const useSlotStore = defineStore('slots', {
     isSelectedDayOpen: (s) => isMarketOpen(s.settings, s.selectedDate),
     // วันเปิดขาย 14 วันถัดไป (รวมวันนี้ถ้าเปิด) สำหรับแถบเลือกวัน
     quickDates: (s) => openDatesFrom(s.settings, todayBangkok(), 14),
-    lockByStall: (s) => Object.fromEntries(s.locks.map(l => [l.stallId, l]))
+    // lock ที่รอสลิปแล้วหมดเวลา = แผงว่าง (คำนวณที่ client; rules ตัดสินซ้ำตอนจองทับ)
+    lockByStall: (s) => Object.fromEntries(
+      s.locks.filter(l => !isHoldExpired(l, s.nowMs)).map(l => [l.stallId, l])
+    )
   },
 
   actions: {
@@ -77,7 +86,24 @@ export const useSlotStore = defineStore('slots', {
       this.listenLocks()
     },
 
+    scheduleExpiryTick() {
+      if (expiryTimer) clearTimeout(expiryTimer)
+      expiryTimer = null
+      const now = serverNow()
+      const next = this.locks
+        .filter(l => HOLD_STATUSES.includes(l.status))
+        .map(l => holdExpiresAtMs(l.holdStartedAt, l.holdMinutes))
+        .filter(t => t !== null && t > now)
+        .sort((a, b) => a - b)[0]
+      this.nowMs = now
+      if (next === undefined) return
+      // setTimeout สูงสุดราว 24.8 วัน; ปลุกช้ากว่าเวลาหมดอายุเล็กน้อยกันนาฬิกาเหลื่อม
+      expiryTimer = setTimeout(() => { this.nowMs = serverNow(); this.scheduleExpiryTick() }, Math.min(next - now + 300, 2 ** 30))
+    },
+
     stopLocks() {
+      if (expiryTimer) clearTimeout(expiryTimer)
+      expiryTimer = null
       this.unsubLocks?.()
       this.unsubLocks = null
       this.locks = []
@@ -93,6 +119,7 @@ export const useSlotStore = defineStore('slots', {
         this.locks = rows
         this.locksLoaded = true
         this.locksError = ''
+        this.scheduleExpiryTick()
       }, (err) => {
         console.error('Locks listener error:', err)
         this.locksError = 'โหลดสถานะแผงของวันนี้ไม่สำเร็จ'

@@ -12,13 +12,18 @@ import {
   where,
   orderBy,
   limit,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 } from 'firebase/firestore'
 import { toPublicBookedBy, PUBLIC_TEXT_MAX } from '../utils/stallSync'
 import { slipRef, buildSlipDoc } from './slipStorage'
 import { keepAlive } from '../utils/keepAlive'
 import { addAuditToBatch } from './auditLog'
 import { useAuthStore } from '../stores/authStore'
+import { isHoldExpired } from '../utils/holdTimer'
+import { suggestRefund } from '../utils/refundPolicy'
+import { formatReceiptNo, thaiYearOf, formatBaht } from '../utils/receipt'
+import { todayBangkok, addDays } from '../utils/date'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
@@ -328,7 +333,7 @@ const DECISION_NOTICE = {
  * approved -> แผง booked | rejected -> แผง available | needs_slip -> แผงยัง pending
  * ถ้าถูกตัดสินไปแล้ว (admin อีกคนกดก่อน) จะโยน error code 'already-decided' ไม่ทับ
  */
-export async function decideBooking({ bookingId, decision, reason = '', actor }) {
+export async function decideBooking({ bookingId, decision, reason = '', actor, resubmitHours = 24 }) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
   if (!['approved', 'needs_slip', 'rejected'].includes(decision)) throw new Error('การตัดสินไม่ถูกต้อง')
   if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ตรวจ กรุณาเข้าสู่ระบบใหม่')
@@ -357,6 +362,15 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
     const isSlot = Array.isArray(b.slots) && b.slots.length > 0
     const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
 
+    // ออกเลขใบเสร็จตอนอนุมัติ (อ่านตัวนับก่อนเขียนอะไรทั้งหมด)
+    let receipt = null
+    if (decision === 'approved' && !b.receiptNo) {
+      const year = thaiYearOf(todayBangkok())
+      const counterRef = doc(db, 'counters', `receipts_${year}`)
+      const cSnap = await tx.get(counterRef)
+      receipt = { year, seq: (cSnap.exists() ? cSnap.data().next : 0) + 1, counterRef, exists: cSnap.exists() }
+    }
+
     const auditId = addAuditToBatch(tx, {
       actor,
       action: DECISION_ACTION[decision],
@@ -370,6 +384,20 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
     })
     const update = { status: decision, decidedBy: actor.uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId: auditId }
     if (decision !== 'approved') update.statusReason = cleanReason
+    if (receipt) {
+      update.receiptNo = formatReceiptNo(receipt.year, receipt.seq)
+      update.receiptSeq = receipt.seq
+      update.receiptYear = receipt.year
+      update.receiptIssuedAt = serverTimestamp()
+      if (receipt.exists) tx.update(receipt.counterRef, { next: receipt.seq })
+      else tx.set(receipt.counterRef, { year: receipt.year, next: receipt.seq })
+    }
+    // ขอสลิปใหม่ของการจองรายวัน/รอบ: เริ่มนับเวลาใหม่ หมดเวลาแล้วช่องกลับว่าง
+    const holdMinutes = Math.round(resubmitHours * 60)
+    if (decision === 'needs_slip' && isSlot) {
+      update.holdStartedAt = serverTimestamp()
+      update.holdMinutes = holdMinutes
+    }
     tx.update(bookingRef, update)
 
     const now = new Date().toISOString()
@@ -378,6 +406,7 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
         if (!ls.exists() || ls.data().bookingId !== bookingId) continue
         if (decision === 'approved') tx.update(ls.ref, { status: 'approved' })
         if (decision === 'rejected') tx.delete(ls.ref)
+        if (decision === 'needs_slip') tx.update(ls.ref, { status: 'needs_slip', holdStartedAt: serverTimestamp(), holdMinutes })
       }
     } else {
       if (decision === 'approved') tx.update(stallRef, { status: 'booked', updatedAt: now })
@@ -401,9 +430,9 @@ export async function decideBooking({ bookingId, decision, reason = '', actor })
 // ─── ฝั่งผู้เช่า: การจองของฉัน ───────────────────────────────────────────────
 
 /** ฟังการจองของตัวเองแบบ realtime ต้องมี index bookings (tenantId, createdAt DESC) */
-export function subscribeMyBookings(uid, onData, onError) {
+export function subscribeMyBookings(uid, onData, onError, max = 50) {
   if (!isRealFirebaseConfigured || !db || !uid) return () => {}
-  const q = query(collection(db, 'bookings'), where('tenantId', '==', uid), orderBy('createdAt', 'desc'), limit(50))
+  const q = query(collection(db, 'bookings'), where('tenantId', '==', uid), orderBy('createdAt', 'desc'), limit(max))
   return keepAlive(({ ok, fail }) => onSnapshot(q, (snap) => {
     ok()
     onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
@@ -424,9 +453,22 @@ export async function resubmitSlip({ bookingId, tenantId, tenantName = '', slip 
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(bookingRef)
     if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
-    if (snap.data().status !== 'needs_slip') {
+    const b = snap.data()
+    if (b.status !== 'needs_slip') {
       const err = new Error('รายการนี้ไม่ได้อยู่ในสถานะรอสลิปใหม่แล้ว')
       err.code = 'bad-status'
+      throw err
+    }
+    if (isHoldExpired(b)) {
+      const err = new Error('หมดเวลาส่งสลิปใหม่แล้ว ช่องนี้ถูกปล่อยให้คนอื่นจองได้')
+      err.code = 'hold-expired'
+      throw err
+    }
+    const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+    const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+    if (isSlot && lockSnaps.some(ls => !ls.exists() || ls.data().bookingId !== bookingId)) {
+      const err = new Error('ช่องของการจองนี้ถูกจองโดยคนอื่นไปแล้ว')
+      err.code = 'hold-lost'
       throw err
     }
     const auditId = addAuditToBatch(tx, {
@@ -447,6 +489,7 @@ export async function resubmitSlip({ bookingId, tenantId, tenantName = '', slip 
       updatedAt: serverTimestamp(),
       lastAuditId: auditId
     })
+    for (const ls of lockSnaps) if (ls.data().status === 'needs_slip') tx.update(ls.ref, { status: 'pending' })
     tx.set(slipRef(bookingId), buildSlipDoc({
       tenantId,
       marketId: MARKET_ID,
@@ -458,7 +501,7 @@ export async function resubmitSlip({ bookingId, tenantId, tenantName = '', slip 
   })
 }
 
-/** ยกเลิกการจองที่ยังรอตรวจ (pending / needs_slip) และปล่อยแผงใน transaction เดียว */
+/** ยกเลิกการจองที่ยังไม่อนุมัติ (awaiting_slip / pending / needs_slip) และปล่อยแผงใน transaction เดียว */
 export async function cancelMyBooking(bookingId) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
   const bookingRef = doc(db, 'bookings', bookingId)
@@ -466,7 +509,7 @@ export async function cancelMyBooking(bookingId) {
     const bSnap = await tx.get(bookingRef)
     if (!bSnap.exists()) throw new Error('ไม่พบรายการจองนี้')
     const b = bSnap.data()
-    if (!['pending', 'needs_slip'].includes(b.status)) {
+    if (!['awaiting_slip', 'pending', 'needs_slip'].includes(b.status)) {
       const err = new Error('ยกเลิกเองไม่ได้ในสถานะนี้ กรุณาติดต่อผู้ดูแลตลาด')
       err.code = 'bad-status'
       throw err
@@ -486,7 +529,10 @@ export async function cancelMyBooking(bookingId) {
       before: { status: b.status },
       after: { status: 'cancelled' }
     })
-    tx.update(bookingRef, { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId: auditId })
+    // ส่งสลิปแล้วค่อยยกเลิก: ให้ admin ตรวจว่าต้องคืนเงินไหม
+    const patch = { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId: auditId }
+    if (b.status === 'pending') patch.refund = { status: 'pending' }
+    tx.update(bookingRef, patch)
     if (isSlot) {
       // ปล่อยทุก slot ของการจองนี้ (เฉพาะ lock ที่ยังชี้การจองนี้)
       for (const ls of lockSnaps) if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
@@ -538,7 +584,9 @@ export async function deleteDecidedBookings(bookings, actor) {
 export async function bookStallSlots(stallId, customerInfo) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase จึงจองไม่ได้')
   if (!customerInfo?.tenantId) throw new Error('กรุณาเข้าสู่ระบบก่อนจอง')
-  if (!customerInfo.slip?.dataUrl) throw new Error('กรุณาแนบสลิปการโอนเงินก่อนจอง')
+  // ไม่แนบสลิป = กันแผงไว้ก่อน (awaiting_slip) แล้วส่งสลิปภายใน holdMinutes นาที
+  const awaiting = !customerInfo.slip?.dataUrl
+  const holdMinutes = Math.round(Number(customerInfo.holdMinutes) || 30)
   const slots = [...new Set(customerInfo.slots || [])].sort()
   if (slots.length < 1 || slots.length > 7) throw new Error('เลือกวัน/รอบได้ครั้งละ 1-7 ช่อง')
 
@@ -559,7 +607,8 @@ export async function bookStallSlots(stallId, customerInfo) {
     }
 
     const lockSnaps = await Promise.all(slots.map(k => tx.get(lockRef(stallId, k))))
-    const taken = slots.filter((k, i) => lockSnaps[i].exists())
+    // lock ที่รอสลิปและหมดเวลาแล้วถือว่าว่าง จองทับได้ (rules ตัดสินซ้ำด้วยเวลา server)
+    const taken = slots.filter((k, i) => lockSnaps[i].exists() && !isHoldExpired(lockSnaps[i].data()))
     if (taken.length) {
       const err = new Error('มีช่องที่ถูกจองไปแล้ว')
       err.code = 'slot-taken'
@@ -576,9 +625,9 @@ export async function bookStallSlots(stallId, customerInfo) {
       targetId: bookingRef.id,
       bookingId: bookingRef.id,
       marketId: MARKET_ID,
-      after: { status: 'pending', stallNo: stall.stallNo || null }
+      after: { status: awaiting ? 'awaiting_slip' : 'pending', stallNo: stall.stallNo || null }
     })
-    tx.set(bookingRef, {
+    const bookingDoc = {
       stallId,
       stallNo: stall.stallNo || null,
       tenantId: customerInfo.tenantId,
@@ -592,29 +641,38 @@ export async function bookStallSlots(stallId, customerInfo) {
       pricePerSlot,
       totalAmount,
       amountDue: totalAmount,
-      slipHash: customerInfo.slip.hash,
-      slipUploadedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
-      status: 'pending',
+      status: awaiting ? 'awaiting_slip' : 'pending',
       lastAuditId: auditId
-    })
+    }
+    if (awaiting) {
+      bookingDoc.holdStartedAt = serverTimestamp()
+      bookingDoc.holdMinutes = holdMinutes
+    } else {
+      bookingDoc.slipHash = customerInfo.slip.hash
+      bookingDoc.slipUploadedAt = serverTimestamp()
+    }
+    tx.set(bookingRef, bookingDoc)
     for (const key of slots) {
       const [date, roundId] = key.split('_')
-      const lock = { marketId: MARKET_ID, stallId, date, roundId, slotKey: key, bookingId: bookingRef.id, status: 'pending', createdAt: serverTimestamp() }
+      const lock = { marketId: MARKET_ID, stallId, date, roundId, slotKey: key, bookingId: bookingRef.id, status: bookingDoc.status, createdAt: serverTimestamp() }
+      if (awaiting) { lock.holdStartedAt = serverTimestamp(); lock.holdMinutes = holdMinutes }
       if (shopName) lock.shopName = shopName
       if (goodsType) lock.goodsType = goodsType
       tx.set(lockRef(stallId, key), lock)
     }
-    tx.set(slipRef(bookingRef.id), buildSlipDoc({
-      tenantId: customerInfo.tenantId,
-      marketId: MARKET_ID,
-      dataUrl: customerInfo.slip.dataUrl,
-      mime: customerInfo.slip.mime,
-      bytes: customerInfo.slip.bytes,
-      createdAt: serverTimestamp()
-    }))
+    if (!awaiting) {
+      tx.set(slipRef(bookingRef.id), buildSlipDoc({
+        tenantId: customerInfo.tenantId,
+        marketId: MARKET_ID,
+        dataUrl: customerInfo.slip.dataUrl,
+        mime: customerInfo.slip.mime,
+        bytes: customerInfo.slip.bytes,
+        createdAt: serverTimestamp()
+      }))
+    }
   })
-  return { bookingId: bookingRef.id }
+  return { bookingId: bookingRef.id, status: awaiting ? 'awaiting_slip' : 'pending' }
 }
 
 /** ฟัง lock ของช่อง (วัน+รอบ) ที่เลือกแบบ realtime ใช้ระบายสีแผงบนผัง */
@@ -652,4 +710,420 @@ export async function countFutureLocksOfRound(roundId, fromDate) {
     limit(200)
   ))
   return snap.size
+}
+
+// ─── ส่วน 3: กันแผงรอสลิป / หมดเวลา ──────────────────────────────────────────
+
+const noticeTo = (tx, b, { title, message, type = 'BOOKING' }) => {
+  tx.set(doc(collection(db, 'notifications')), {
+    tenantId: b.tenantId,
+    stallId: b.stallId,
+    stallNo: b.stallNo || '',
+    title,
+    message,
+    type,
+    isRead: false,
+    createdAt: new Date().toISOString()
+  })
+}
+
+/**
+ * ผู้เช่าแนบสลิปครั้งแรกหลังกันแผง: awaiting_slip -> pending + lock ทุกช่องเป็น pending ใน transaction เดียว
+ * ถ้าหมดเวลา หรือช่องถูกจองทับไปแล้ว จะโยน error code 'hold-expired' / 'hold-lost'
+ */
+export async function submitHeldSlip({ bookingId, tenantId, tenantName = '', slip }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!slip?.dataUrl) throw new Error('กรุณาแนบสลิปการโอนเงิน')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    if (b.status !== 'awaiting_slip') {
+      const err = new Error('รายการนี้ไม่ได้อยู่ในสถานะรอส่งสลิปแล้ว')
+      err.code = 'bad-status'
+      throw err
+    }
+    if (isHoldExpired(b)) {
+      const err = new Error('หมดเวลาชำระเงินแล้ว ช่องนี้ถูกปล่อยให้คนอื่นจองได้')
+      err.code = 'hold-expired'
+      throw err
+    }
+    const lockSnaps = await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k))))
+    if (lockSnaps.some(ls => !ls.exists() || ls.data().bookingId !== bookingId)) {
+      const err = new Error('ช่องของการจองนี้ถูกจองโดยคนอื่นไปแล้ว')
+      err.code = 'hold-lost'
+      throw err
+    }
+    const auditId = addAuditToBatch(tx, {
+      actor: selfActor(tenantId, tenantName || b.customerName),
+      action: 'booking.slip_submit',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: 'awaiting_slip' },
+      after: { status: 'pending' }
+    })
+    tx.update(bookingRef, {
+      status: 'pending',
+      slipHash: slip.hash,
+      slipUploadedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastAuditId: auditId
+    })
+    for (const ls of lockSnaps) tx.update(ls.ref, { status: 'pending' })
+    tx.set(slipRef(bookingId), buildSlipDoc({
+      tenantId,
+      marketId: MARKET_ID,
+      dataUrl: slip.dataUrl,
+      mime: slip.mime,
+      bytes: slip.bytes,
+      createdAt: serverTimestamp()
+    }))
+  })
+}
+
+/**
+ * ตั้งสถานะ "หมดเวลา" ให้รายการที่หมดเวลากันแผงแล้ว (ทำเมื่อเจ้าของ/admin เปิดหน้าเว็บ ความถูกต้องของแผงไม่ขึ้นกับขั้นนี้)
+ * ทำทีละไม่เกิน 20 รายการ ถ้าชนกัน (อีกคนทำไปแล้ว) หรือ rules ยังเห็นว่าไม่หมดเวลา (นาฬิกาเครื่องเร็ว) ข้ามเงียบ
+ * @returns {Promise<number>} จำนวนที่ตั้งเป็นหมดเวลา
+ */
+export async function expireBookings(bookings, actor, offsetMs = 0) {
+  if (!isRealFirebaseConfigured || !db || !actor?.uid) return 0
+  const now = Date.now()
+  const due = bookings.filter(b => isHoldExpired(b, now, offsetMs)).slice(0, 20)
+  let done = 0
+  for (const target of due) {
+    try {
+      await runTransaction(db, async (tx) => {
+        const bookingRef = doc(db, 'bookings', target.id)
+        const snap = await tx.get(bookingRef)
+        if (!snap.exists()) return
+        const b = snap.data()
+        if (!isHoldExpired(b, now, offsetMs)) return
+        const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+        const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+        const auditId = addAuditToBatch(tx, {
+          actor,
+          action: 'booking.expire',
+          targetType: 'booking',
+          targetId: target.id,
+          bookingId: target.id,
+          marketId: MARKET_ID,
+          before: { status: b.status },
+          after: { status: 'expired' }
+        })
+        tx.update(bookingRef, { status: 'expired', updatedAt: serverTimestamp(), lastAuditId: auditId })
+        for (const ls of lockSnaps) {
+          // ลบเฉพาะ lock ที่ยังชี้การจองนี้ (ถ้าถูกจองทับแล้ว lock เป็นของคนอื่น ไม่แตะ)
+          if (ls.exists() && ls.data().bookingId === target.id) tx.delete(ls.ref)
+        }
+        if (b.tenantId !== actor.uid) {
+          noticeTo(tx, b, { title: 'การจองหมดเวลา', message: `การจองแผง ${b.stallNo || ''} หมดเวลาชำระเงินแล้ว` })
+        }
+      })
+      done++
+    } catch (err) {
+      if (err?.code !== 'permission-denied' && err?.code !== 'aborted') console.warn('Expire booking notice:', err?.message)
+    }
+  }
+  return done
+}
+
+// ─── ส่วน 4: ยกเลิก + คืนเงิน ────────────────────────────────────────────────
+
+/** ผู้เช่าขอยกเลิกการจองที่อนุมัติแล้ว (approved -> cancel_requested) พร้อมบัญชีรับเงินคืน (ไม่บังคับ) */
+export async function requestCancelBooking({ bookingId, reason, account = null, tenantName = '' }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  const cleanReason = String(reason || '').trim().slice(0, 300)
+  if (!cleanReason) throw new Error('กรุณาระบุเหตุผลที่ขอยกเลิก')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    if (b.status !== 'approved') {
+      const err = new Error('ขอยกเลิกได้เฉพาะการจองที่อนุมัติแล้ว')
+      err.code = 'bad-status'
+      throw err
+    }
+    const auditId = addAuditToBatch(tx, {
+      actor: selfActor(b.tenantId, tenantName || b.customerName),
+      action: 'booking.cancel_request',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: 'approved' },
+      after: { status: 'cancel_requested' },
+      reason: cleanReason
+    })
+    tx.update(bookingRef, {
+      status: 'cancel_requested',
+      cancelRequest: { reason: cleanReason, requestedAt: serverTimestamp() },
+      updatedAt: serverTimestamp(),
+      lastAuditId: auditId
+    })
+    if (account && (account.accountName || account.bank || account.accountNo)) {
+      tx.set(doc(db, 'refundAccounts', bookingId), {
+        tenantId: b.tenantId,
+        accountName: String(account.accountName || '').trim().slice(0, 100),
+        bank: String(account.bank || '').trim().slice(0, 60),
+        accountNo: String(account.accountNo || '').trim().slice(0, 40)
+      })
+    }
+  })
+}
+
+/** ผู้เช่าถอนคำขอยกเลิก (cancel_requested -> approved) */
+export async function withdrawCancelRequest({ bookingId, tenantName = '' }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    if (b.status !== 'cancel_requested') {
+      const err = new Error('รายการนี้ไม่ได้อยู่ในสถานะขอยกเลิกแล้ว')
+      err.code = 'bad-status'
+      throw err
+    }
+    const auditId = addAuditToBatch(tx, {
+      actor: selfActor(b.tenantId, tenantName || b.customerName),
+      action: 'booking.cancel_withdraw',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: 'cancel_requested' },
+      after: { status: 'approved' }
+    })
+    tx.update(bookingRef, { status: 'approved', cancelRequest: deleteField(), updatedAt: serverTimestamp(), lastAuditId: auditId })
+  })
+}
+
+/**
+ * admin/owner ตัดสินการยกเลิก
+ *  mode 'approve' : cancel_requested -> cancelled (ปล่อยช่องที่ยังไม่ถึงวันขาย + บันทึกยอดคืนที่ต้องคืน)
+ *  mode 'deny'    : cancel_requested -> approved (ต้องมีเหตุผล)
+ *  mode 'direct'  : approved -> cancelled โดย admin (ต้องมีเหตุผล)
+ * ยอดคืนที่แนะนำคิดจากนโยบาย ปรับได้แต่ต้องใส่ adjustReason
+ */
+export async function decideCancellation({ bookingId, mode, reason = '', refundAmount, adjustReason = '', policy, actor }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!['approve', 'deny', 'direct'].includes(mode)) throw new Error('การตัดสินไม่ถูกต้อง')
+  if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ทำรายการ กรุณาเข้าสู่ระบบใหม่')
+  const cleanReason = String(reason || '').trim().slice(0, 300)
+  if ((mode === 'deny' || mode === 'direct') && !cleanReason) throw new Error('กรุณาระบุเหตุผล')
+
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    const okStatus = mode === 'direct' ? b.status === 'approved' : b.status === 'cancel_requested'
+    if (!okStatus) {
+      const err = new Error('รายการนี้ถูกตัดสินไปแล้ว หรือสถานะเปลี่ยนไป')
+      err.code = 'already-decided'
+      throw err
+    }
+    const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+    const stallRef = doc(stallsCol(), b.stallId)
+    const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+    const sSnap = isSlot ? null : await tx.get(stallRef)
+
+    const common = { decidedBy: actor.uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    if (mode === 'deny') {
+      const auditId = addAuditToBatch(tx, {
+        actor, action: 'booking.cancel_deny', targetType: 'booking', targetId: bookingId, bookingId, marketId: MARKET_ID,
+        before: { status: 'cancel_requested' }, after: { status: 'approved' }, reason: cleanReason
+      })
+      tx.update(bookingRef, { ...common, status: 'approved', statusReason: cleanReason, cancelRequest: deleteField(), lastAuditId: auditId })
+      noticeTo(tx, b, { title: 'ไม่อนุมัติการยกเลิก', message: `คำขอยกเลิกการจองแผง ${b.stallNo || ''} ไม่ได้รับอนุมัติ (${cleanReason})`, type: 'CANCEL_REVIEW' })
+      return
+    }
+
+    const suggestion = suggestRefund(b, policy || {}, new Date())
+    const amount = refundAmount === undefined || refundAmount === null || refundAmount === '' ? suggestion.amount : Math.round(Number(refundAmount) * 100) / 100
+    if (!Number.isFinite(amount) || amount < 0 || amount > Number(b.amountDue || 0)) throw new Error('ยอดคืนเงินต้องอยู่ระหว่าง 0 ถึงยอดที่จ่าย')
+    const adjusted = amount !== suggestion.amount
+    const cleanAdjust = String(adjustReason || '').trim().slice(0, 300)
+    if (adjusted && !cleanAdjust) throw new Error('ยอดคืนต่างจากยอดที่แนะนำตามนโยบาย กรุณาระบุเหตุผล')
+    const refund = {
+      status: amount > 0 ? 'pending' : 'none',
+      amount,
+      suggestedAmount: suggestion.amount,
+      policyText: suggestion.reasonText.slice(0, 300)
+    }
+    if (adjusted) refund.adjustReason = cleanAdjust
+
+    const auditId = addAuditToBatch(tx, {
+      actor,
+      action: mode === 'direct' ? 'booking.cancel_admin' : 'booking.cancel_approve',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: b.status },
+      after: { status: 'cancelled', refund: `${refund.status} ${amount}` },
+      reason: cleanReason || cleanAdjust
+    })
+    const update = { ...common, status: 'cancelled', wasApproved: true, refund, lastAuditId: auditId }
+    if (cleanReason) update.statusReason = cleanReason
+    if (isSlot) update.releasedSlots = suggestion.releaseSlots
+    tx.update(bookingRef, update)
+    if (isSlot) {
+      // ปล่อยเฉพาะช่องที่ยังไม่ถึงวันขาย ช่องที่ผ่านมาแล้วยังนับเป็นรายได้
+      for (const ls of lockSnaps) {
+        if (ls.exists() && ls.data().bookingId === bookingId && suggestion.releaseSlots.includes(ls.data().slotKey)) tx.delete(ls.ref)
+      }
+    } else if (sSnap?.exists() && sSnap.data().bookedBy?.bookingId === bookingId) {
+      tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+    }
+    noticeTo(tx, b, {
+      title: 'อนุมัติการยกเลิก',
+      message: refund.status === 'pending'
+        ? `การจองแผง ${b.stallNo || ''} ถูกยกเลิกแล้ว จะได้รับเงินคืน ${formatBaht(amount)}`
+        : `การจองแผง ${b.stallNo || ''} ถูกยกเลิกแล้ว (ไม่มียอดคืนตามนโยบาย)`,
+      type: 'CANCEL_REVIEW'
+    })
+  })
+}
+
+/** admin/owner บันทึกว่าคืนเงินแล้ว (ยอดจริง วิธี วันที่ หมายเหตุ รูปสลิปคืนเงินไม่บังคับ) */
+export async function recordRefund({ bookingId, amount, method, date, note = '', slip = null, actor }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ทำรายการ กรุณาเข้าสู่ระบบใหม่')
+  if (!['transfer', 'promptpay', 'cash'].includes(method)) throw new Error('กรุณาเลือกวิธีคืนเงิน')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) throw new Error('กรุณาระบุวันที่คืนเงิน')
+  const amt = Math.round(Number(amount) * 100) / 100
+  const bookingRef = doc(db, 'bookings', bookingId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    if (b.status !== 'cancelled' || b.refund?.status !== 'pending') {
+      const err = new Error('รายการนี้ไม่ได้อยู่ในสถานะรอคืนเงินแล้ว')
+      err.code = 'already-decided'
+      throw err
+    }
+    if (!Number.isFinite(amt) || amt < 0 || amt > Number(b.amountDue || 0)) throw new Error('ยอดที่คืนต้องไม่เกินยอดที่ผู้เช่าจ่าย')
+    const refund = {
+      ...b.refund,
+      status: 'refunded',
+      amount: amt,
+      method,
+      refundedDate: date,
+      refundedBy: actor.uid,
+      refundedAt: serverTimestamp()
+    }
+    const cleanNote = String(note || '').trim().slice(0, 300)
+    if (cleanNote) refund.note = cleanNote
+    const auditId = addAuditToBatch(tx, {
+      actor, action: 'refund.record', targetType: 'booking', targetId: bookingId, bookingId, marketId: MARKET_ID,
+      before: { refundStatus: 'pending' }, after: { refundStatus: 'refunded', refundAmount: amt, refundMethod: method }
+    })
+    tx.update(bookingRef, { refund, updatedAt: serverTimestamp(), lastAuditId: auditId })
+    if (slip?.dataUrl) {
+      tx.set(doc(db, 'refundSlips', bookingId), buildSlipDoc({
+        tenantId: b.tenantId, marketId: MARKET_ID, dataUrl: slip.dataUrl, mime: slip.mime, bytes: slip.bytes, createdAt: serverTimestamp()
+      }))
+    }
+    // ข้อมูลบัญชีรับเงินคืนไม่จำเป็นอีกแล้ว ลบทิ้ง
+    tx.delete(doc(db, 'refundAccounts', bookingId))
+    noticeTo(tx, b, { title: 'คืนเงินแล้ว', message: `คืนเงินการจองแผง ${b.stallNo || ''} แล้ว ${formatBaht(amt)}`, type: 'REFUND' })
+  })
+}
+
+export async function getRefundAccount(bookingId) {
+  if (!isRealFirebaseConfigured || !db) return null
+  const snap = await getDoc(doc(db, 'refundAccounts', bookingId))
+  return snap.exists() ? snap.data() : null
+}
+
+export async function getRefundSlip(bookingId) {
+  if (!isRealFirebaseConfigured || !db) return null
+  const snap = await getDoc(doc(db, 'refundSlips', bookingId))
+  return snap.exists() ? snap.data() : null
+}
+
+// ─── ส่วน 5: ใบเสร็จ ─────────────────────────────────────────────────────────
+
+/** อ่านการจองทั้งก้อนพร้อม id (เจ้าของหรือ admin เท่านั้นตาม rules) */
+export async function fetchBookingFull(bookingId) {
+  if (!isRealFirebaseConfigured || !db || !bookingId) return null
+  const snap = await getDoc(doc(db, 'bookings', bookingId))
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null
+}
+
+/** ออกเลขใบเสร็จให้การจองที่อนุมัติไปก่อนมีระบบนี้ (admin/owner เท่านั้น) คืนเลขใบเสร็จ */
+export async function issueReceiptNumber({ bookingId, actor }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ทำรายการ กรุณาเข้าสู่ระบบใหม่')
+  const bookingRef = doc(db, 'bookings', bookingId)
+  let receiptNo = ''
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) throw new Error('ไม่พบรายการจองนี้')
+    const b = snap.data()
+    if (b.receiptNo) { receiptNo = b.receiptNo; return }
+    const year = thaiYearOf(todayBangkok())
+    const counterRef = doc(db, 'counters', `receipts_${year}`)
+    const cSnap = await tx.get(counterRef)
+    const seq = (cSnap.exists() ? cSnap.data().next : 0) + 1
+    receiptNo = formatReceiptNo(year, seq)
+    const auditId = addAuditToBatch(tx, {
+      actor, action: 'booking.receipt_issue', targetType: 'booking', targetId: bookingId, bookingId, marketId: MARKET_ID,
+      after: { receiptNo }
+    })
+    if (cSnap.exists()) tx.update(counterRef, { next: seq })
+    else tx.set(counterRef, { year, next: seq })
+    tx.update(bookingRef, {
+      receiptNo, receiptSeq: seq, receiptYear: year, receiptIssuedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(), lastAuditId: auditId
+    })
+  })
+  return receiptNo
+}
+
+// ─── ส่วน 6: รายงานรายได้ ────────────────────────────────────────────────────
+
+/**
+ * ดึงการจองที่เกี่ยวกับช่วง [fetchFrom, to] สำหรับรายงาน (อ่านครั้งเดียว ไม่ใช่ realtime)
+ * 1) การจองรายวัน/รอบ: firstDate อยู่ในช่วง (ถอยหลัง 7 วันเผื่อการจองหลายช่อง)
+ * 2) การจองเก่าไม่มีวันที่: ดูจาก createdAt (กรองจริงตามวันอนุมัติที่ฝั่ง client)
+ * 3) การคืนเงิน: refund.refundedAt อยู่ในช่วง
+ */
+export async function fetchBookingsForReport(fetchFrom, to) {
+  if (!isRealFirebaseConfigured || !db) return []
+  const start = Timestamp.fromDate(new Date(`${addDays(fetchFrom, -60)}T00:00:00+07:00`))
+  const startRefund = Timestamp.fromDate(new Date(`${fetchFrom}T00:00:00+07:00`))
+  const end = Timestamp.fromDate(new Date(`${addDays(to, 1)}T00:00:00+07:00`))
+  const col = collection(db, 'bookings')
+  const [bySlots, legacy, refunded] = await Promise.all([
+    getDocs(query(col, where('firstDate', '>=', addDays(fetchFrom, -7)), where('firstDate', '<=', to), limit(1500))),
+    getDocs(query(col, where('createdAt', '>=', start), where('createdAt', '<', end), limit(1500))),
+    getDocs(query(col, where('refund.refundedAt', '>=', startRefund), where('refund.refundedAt', '<', end), limit(500)))
+  ])
+  const byId = new Map()
+  for (const snap of [bySlots, legacy, refunded]) {
+    for (const d of snap.docs) byId.set(d.id, { id: d.id, ...d.data() })
+  }
+  return [...byId.values()]
+}
+
+/** บันทึก audit log ว่ามีการส่งออกรายงาน (ช่วงวันที่ + จำนวนแถว) */
+export async function logReportExport({ actor, from, to, rowCount, format }) {
+  if (!isRealFirebaseConfigured || !db) return
+  const batch = writeBatch(db)
+  addAuditToBatch(batch, {
+    actor,
+    action: 'report.export',
+    targetType: 'settings',
+    targetId: 'revenue-report',
+    marketId: MARKET_ID,
+    after: { from, to, rows: rowCount, format }
+  })
+  await batch.commit()
 }

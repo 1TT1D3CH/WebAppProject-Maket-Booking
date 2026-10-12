@@ -31,6 +31,9 @@
       <!-- บันทึกการทำงาน / audit log (owner/admin only) -->
       <AuditLogPanel v-else-if="marketStore.activeMode === 'audit' && authStore.isAdmin" />
 
+      <!-- รายงานรายได้ (owner เท่านั้น) -->
+      <RevenuePanel v-else-if="marketStore.activeMode === 'revenue' && authStore.isOwner" />
+
       <!-- Customer Interactive Booking View -->
       <CustomerStallMap 
         v-else
@@ -72,6 +75,7 @@
       @close="isBookingModalOpen = false"
       @open-auth="isAuthOpen = true"
       @need-profile="isProfileForced = true"
+      @open-my-bookings="isBookingModalOpen = false; isMyBookingsOpen = true"
     />
 
     <FirebaseSettingsModal 
@@ -101,7 +105,11 @@
     <MyBookingsModal
       :is-open="isMyBookingsOpen"
       @close="isMyBookingsOpen = false"
+      @rebook="handleRebook"
     />
+
+    <!-- ใบเสร็จรับเงิน (หน้าเต็ม เปิดจาก ?receipt=<id>) -->
+    <ReceiptView @open-auth="isAuthOpen = true" />
 
     <NotificationCenter 
       :is-open="isNotificationsOpen"
@@ -155,9 +163,11 @@ import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
 import MembersPanel from './components/Admin/MembersPanel.vue'
 import SlipReviewPanel from './components/Admin/SlipReviewPanel.vue'
 import AuditLogPanel from './components/Admin/AuditLogPanel.vue'
+import RevenuePanel from './components/Admin/RevenuePanel.vue'
 import BookingSettingsModal from './components/Admin/BookingSettingsModal.vue'
 import { useSlotStore } from './stores/slotStore'
 import MyBookingsModal from './components/Customer/MyBookingsModal.vue'
+import ReceiptView from './components/Customer/ReceiptView.vue'
 import { useMyBookingsStore } from './stores/myBookingsStore'
 import { useSlipReviewStore } from './stores/slipReviewStore'
 
@@ -276,6 +286,16 @@ function handleProfileSaved() {
     handleOpenBooking(pendingBookingStall.value)
     pendingBookingStall.value = null
   }
+}
+
+function handleRebook(stallId) {
+  const stall = marketStore.pub.stalls.find(s => s.id === stallId)
+  if (!stall) {
+    marketStore.showNotification('ไม่พบแผงนี้ในผังแล้ว', 'error')
+    return
+  }
+  isMyBookingsOpen.value = false
+  handleOpenBooking(stall)
 }
 
 function handleOpenBooking(stall) {

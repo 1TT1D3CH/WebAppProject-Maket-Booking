@@ -68,9 +68,9 @@
             <ReceiptText class="w-3.5 h-3.5" />
             <span class="hidden sm:inline">ตรวจสลิป</span>
             <span
-              v-if="slipReviewStore.pendingCount"
+              v-if="slipReviewStore.actionCount"
               class="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold font-mono flex items-center justify-center"
-            >{{ slipReviewStore.pendingCount }}</span>
+            >{{ slipReviewStore.actionCount }}</span>
           </button>
 
           <button
@@ -82,6 +82,18 @@
           >
             <History class="w-3.5 h-3.5" />
             <span class="hidden sm:inline">บันทึกการทำงาน</span>
+          </button>
+
+          <button
+            v-if="authStore.isOwner"
+            @click="marketStore.setMode('revenue')"
+            class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
+            :class="marketStore.activeMode === 'revenue'
+              ? 'bg-teal-600 text-white shadow-sm shadow-teal-200 dark:shadow-none'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'"
+          >
+            <BarChart3 class="w-3.5 h-3.5" />
+            <span class="hidden sm:inline">รายงานรายได้</span>
           </button>
 
           <button
@@ -307,6 +319,7 @@ import {
   ReceiptText,
   History,
   CalendarDays,
+  BarChart3,
   ClipboardList,
   Maximize2,
   Bell,

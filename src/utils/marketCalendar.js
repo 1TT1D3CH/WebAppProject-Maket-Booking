@@ -17,7 +17,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   maxAdvanceDays: 30,
   bookingCutoffTime: '', // 'HH:MM' ของวันก่อนวันขาย ว่าง = ไม่จำกัด
   maxSlotsPerBooking: MAX_SLOTS_LIMIT,
-  rounds: [] // ว่าง = วันละรอบเดียว (id 'all')
+  rounds: [], // ว่าง = วันละรอบเดียว (id 'all')
+  paymentHoldMinutes: 30, // กันแผงรอสลิปกี่นาที (10-120)
+  resubmitHours: 24, // ให้เวลาส่งสลิปใหม่กี่ชั่วโมง (1-72)
+  cancelPolicy: { fullRefundDaysBefore: 3, partialRefundPercent: 50, noRefundOnMarketDay: true, allowTenantRequest: true },
+  receipt: { name: '', address: '', phone: '', taxId: '', paper: 'A5' }
 })
 
 const clampInt = (v, min, max, fallback) => {
@@ -30,6 +34,9 @@ const uniqueDates = (list) => [...new Set((Array.isArray(list) ? list : []).filt
 /** รับค่าจาก Firestore (หรือ undefined) แล้วคืนค่าตั้งค่าที่ปลอดภัยเสมอ */
 export function normalizeSettings(raw) {
   const s = raw && typeof raw === 'object' ? raw : {}
+  const cp = s.cancelPolicy && typeof s.cancelPolicy === 'object' ? s.cancelPolicy : {}
+  const rc = s.receipt && typeof s.receipt === 'object' ? s.receipt : {}
+  const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
   const weekdays = Array.isArray(s.openWeekdays)
     ? [...new Set(s.openWeekdays.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))].sort()
     : null
@@ -49,7 +56,22 @@ export function normalizeSettings(raw) {
     maxAdvanceDays: clampInt(s.maxAdvanceDays, 1, 365, DEFAULT_SETTINGS.maxAdvanceDays),
     bookingCutoffTime: TIME_RE.test(s.bookingCutoffTime) ? s.bookingCutoffTime : '',
     maxSlotsPerBooking: clampInt(s.maxSlotsPerBooking, 1, MAX_SLOTS_LIMIT, MAX_SLOTS_LIMIT),
-    rounds
+    rounds,
+    paymentHoldMinutes: clampInt(s.paymentHoldMinutes, 10, 120, DEFAULT_SETTINGS.paymentHoldMinutes),
+    resubmitHours: clampInt(s.resubmitHours, 1, 72, DEFAULT_SETTINGS.resubmitHours),
+    cancelPolicy: {
+      fullRefundDaysBefore: clampInt(cp.fullRefundDaysBefore, 0, 365, 3),
+      partialRefundPercent: clampInt(cp.partialRefundPercent, 0, 100, 50),
+      noRefundOnMarketDay: cp.noRefundOnMarketDay !== false,
+      allowTenantRequest: cp.allowTenantRequest !== false
+    },
+    receipt: {
+      name: str(rc.name, 100),
+      address: str(rc.address, 200),
+      phone: str(rc.phone, 30),
+      taxId: str(rc.taxId, 20),
+      paper: rc.paper === 'A4' ? 'A4' : 'A5'
+    }
   }
 }
 

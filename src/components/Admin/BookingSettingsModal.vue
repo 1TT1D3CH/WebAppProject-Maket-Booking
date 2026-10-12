@@ -74,6 +74,62 @@
         </div>
       </section>
 
+      <!-- เวลากันแผง -->
+      <section class="space-y-2">
+        <h3 class="font-bold text-slate-900 dark:text-white">เวลากันแผงรอสลิป</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">กันแผงหลังกดจอง (นาที, 10-120)
+            <input v-model.number="form.paymentHoldMinutes" type="number" min="10" max="120" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">ให้เวลาส่งสลิปใหม่ที่ขอ (ชั่วโมง, 1-72)
+            <input v-model.number="form.resubmitHours" type="number" min="1" max="72" class="field" />
+          </label>
+        </div>
+        <p class="text-[11px] text-slate-400">หมดเวลาแล้วแผงว่างให้คนอื่นจองได้เองโดยไม่ต้องรอใครกด</p>
+      </section>
+
+      <!-- นโยบายยกเลิก / คืนเงิน -->
+      <section class="space-y-2">
+        <h3 class="font-bold text-slate-900 dark:text-white">นโยบายยกเลิกและคืนเงิน</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">คืนเต็มเมื่อยกเลิกก่อนวันขาย (วันขึ้นไป)
+            <input v-model.number="form.cancelPolicy.fullRefundDaysBefore" type="number" min="0" max="365" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">ยกเลิกน้อยกว่านั้นคืน (%)
+            <input v-model.number="form.cancelPolicy.partialRefundPercent" type="number" min="0" max="100" class="field" />
+          </label>
+        </div>
+        <label class="flex items-center gap-3 min-h-[44px] text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <input v-model="form.cancelPolicy.noRefundOnMarketDay" type="checkbox" class="w-5 h-5 accent-indigo-600" /> วันขายและหลังจากนั้นไม่คืนเงิน
+        </label>
+        <label class="flex items-center gap-3 min-h-[44px] text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <input v-model="form.cancelPolicy.allowTenantRequest" type="checkbox" class="w-5 h-5 accent-indigo-600" /> ให้ผู้เช่าขอยกเลิกการจองที่อนุมัติแล้วเองได้
+        </label>
+      </section>
+
+      <!-- ข้อมูลบนใบเสร็จ -->
+      <section class="space-y-2">
+        <h3 class="font-bold text-slate-900 dark:text-white">ข้อมูลบนใบเสร็จรับเงิน</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">ชื่อตลาด / ผู้รับเงิน
+            <input v-model="form.receipt.name" type="text" maxlength="100" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">เบอร์โทร
+            <input v-model="form.receipt.phone" type="text" maxlength="30" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 sm:col-span-2">ที่อยู่
+            <input v-model="form.receipt.address" type="text" maxlength="200" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">เลขประจำตัวผู้เสียภาษี (ไม่บังคับ)
+            <input v-model="form.receipt.taxId" type="text" maxlength="20" class="field" />
+          </label>
+          <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">ขนาดกระดาษ
+            <select v-model="form.receipt.paper" class="field"><option value="A5">A5</option><option value="A4">A4</option></select>
+          </label>
+        </div>
+        <p class="text-[11px] text-slate-400">ใบเสร็จนี้เป็นใบเสร็จรับเงิน ไม่ใช่ใบกำกับภาษี</p>
+      </section>
+
       <p v-if="error" class="rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 p-3 text-xs text-rose-700 dark:text-rose-300 font-medium">{{ error }}</p>
       <p class="text-[11px] text-slate-400">หมายเหตุ: ปฏิทินตลาด (วันเปิด/ปิด จองล่วงหน้า เวลาปิดรับ) ตรวจที่หน้าเว็บของผู้จอง ส่วนการกันจองซ้ำและราคาตรวจที่ฐานข้อมูล</p>
     </form>

@@ -1,5 +1,12 @@
 import { defineStore } from 'pinia'
-import { subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip, deleteDecidedBookings } from '../services/firebaseService'
+import {
+  subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip, deleteDecidedBookings,
+  decideCancellation, recordRefund, getRefundAccount, expireBookings
+} from '../services/firebaseService'
+import { useAuthStore } from './authStore'
+import { useSlotStore } from './slotStore'
+import { isHoldExpired } from '../utils/holdTimer'
+import { serverNow } from '../utils/serverClock'
 import { getSlip } from '../services/slipStorage'
 
 function describeError(err) {
@@ -14,7 +21,10 @@ export const useSlipReviewStore = defineStore('slipReview', {
     pending: [],
     needsSlip: [],
     decided: [],
-    loaded: { pending: false, needsSlip: false, decided: false },
+    awaiting: [], // กันแผงรอสลิป
+    cancelReq: [], // ผู้เช่าขอยกเลิก
+    cancelled: [], // ยกเลิกแล้ว (ใช้หารายการรอคืนเงิน)
+    loaded: { pending: false, needsSlip: false, decided: false, awaiting: false, cancelReq: false, cancelled: false },
     error: '',
     selectedId: null,
     slipCache: {}, // bookingId -> { dataUrl, mime } | null (ไม่มีรูป)
@@ -23,10 +33,13 @@ export const useSlipReviewStore = defineStore('slipReview', {
 
   getters: {
     pendingCount: (s) => s.pending.length,
+    // รายการที่รอผู้ดูแลลงมือ: ตรวจสลิป + คำขอยกเลิก + รอคืนเงิน (ป้ายแจ้งบนเมนู)
+    refundPending: (s) => s.cancelled.filter(b => b.refund?.status === 'pending'),
+    actionCount() { return this.pending.length + this.cancelReq.length + this.refundPending.length },
     isLoading: (s) => !(s.loaded.pending && s.loaded.needsSlip && s.loaded.decided),
     // รายการที่ปฏิเสธแล้ว (ลบออกจากรายการได้)
     rejectedList: (s) => s.decided.filter(b => b.status === 'rejected'),
-    byId: (s) => (id) => [...s.pending, ...s.needsSlip, ...s.decided].find(b => b.id === id) || null
+    byId: (s) => (id) => [...s.pending, ...s.needsSlip, ...s.decided, ...s.awaiting, ...s.cancelReq, ...s.cancelled].find(b => b.id === id) || null
   },
 
   actions: {
@@ -41,11 +54,15 @@ export const useSlipReviewStore = defineStore('slipReview', {
         this[key] = rows
         this.loaded[key] = true
         this.error = ''
+        if (key === 'awaiting' || key === 'needsSlip') this.sweepExpired(rows)
       }, onError)
       this.unsubs = [
         listen('pending', ['pending'], { order: 'asc' }),
         listen('needsSlip', ['needs_slip'], { order: 'asc' }),
-        listen('decided', ['approved', 'rejected'], { order: 'desc', max: 50 })
+        listen('decided', ['approved', 'rejected'], { order: 'desc', max: 50 }),
+        listen('awaiting', ['awaiting_slip'], { order: 'asc' }),
+        listen('cancelReq', ['cancel_requested'], { order: 'asc' }),
+        listen('cancelled', ['cancelled'], { order: 'desc', max: 100 })
       ]
     },
 
@@ -55,7 +72,10 @@ export const useSlipReviewStore = defineStore('slipReview', {
       this.pending = []
       this.needsSlip = []
       this.decided = []
-      this.loaded = { pending: false, needsSlip: false, decided: false }
+      this.awaiting = []
+      this.cancelReq = []
+      this.cancelled = []
+      this.loaded = { pending: false, needsSlip: false, decided: false, awaiting: false, cancelReq: false, cancelled: false }
       this.selectedId = null
       this.slipCache = {}
     },
@@ -90,8 +110,32 @@ export const useSlipReviewStore = defineStore('slipReview', {
     },
 
     async decide(booking, decision, reason, actor) {
-      await decideBooking({ bookingId: booking.id, decision, reason, actor })
+      await decideBooking({ bookingId: booking.id, decision, reason, actor, resubmitHours: useSlotStore().settings.resubmitHours })
     },
+
+    /** ตั้งสถานะ "หมดเวลา" ให้รายการที่หมดเวลากันแผงแล้ว (ทีละไม่เกิน 20 รายการ) */
+    async sweepExpired(rows) {
+      const actor = useAuthStore().auditActor
+      const now = serverNow()
+      const due = rows.filter(b => isHoldExpired(b, now))
+      if (!due.length || !actor?.uid) return
+      try {
+        await expireBookings(due, actor)
+      } catch (err) {
+        console.warn('Sweep expired notice:', err?.message)
+      }
+    },
+
+    /** อนุมัติ / ไม่อนุมัติ คำขอยกเลิก หรือผู้ดูแลยกเลิกเอง (mode: approve | deny | direct) */
+    decideCancel(booking, mode, opts, actor) {
+      return decideCancellation({ bookingId: booking.id, mode, policy: useSlotStore().settings.cancelPolicy, actor, ...opts })
+    },
+
+    recordRefund(booking, opts, actor) {
+      return recordRefund({ bookingId: booking.id, actor, ...opts })
+    },
+
+    loadRefundAccount: (bookingId) => getRefundAccount(bookingId),
 
     /** ลบรายการที่ปฏิเสธ/ยกเลิกแล้ว คืนจำนวนที่ลบ */
     async removeDecided(bookings, actor) {

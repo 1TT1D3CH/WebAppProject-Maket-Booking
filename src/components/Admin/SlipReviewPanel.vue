@@ -8,7 +8,7 @@
       <div class="shrink-0 p-3 border-b border-slate-200 dark:border-slate-800">
         <div class="flex items-center justify-between mb-2">
           <h2 class="text-base font-bold text-slate-900 dark:text-white">ตรวจสลิปโอนเงิน</h2>
-          <span class="text-[11px] text-slate-500 dark:text-slate-400">รอตรวจ {{ store.pendingCount }} รายการ</span>
+          <span class="text-[11px] text-slate-500 dark:text-slate-400">รอตรวจ {{ store.pendingCount }} · ขอยกเลิก {{ store.cancelReq.length }} · รอคืนเงิน {{ store.refundPending.length }}</span>
         </div>
         <button
           v-if="tab === 'decided' && store.rejectedList.length"
@@ -91,7 +91,10 @@ import { useMarketStore } from '../../stores/marketStore'
 const store = useSlipReviewStore()
 const { isDesktop } = useBreakpoint()
 
-const STATUS_LABEL = { pending: 'รอตรวจ', needs_slip: 'ขอสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว' }
+const STATUS_LABEL = {
+  pending: 'รอตรวจ', needs_slip: 'ขอสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว',
+  awaiting_slip: 'รอชำระเงิน', cancel_requested: 'ขอยกเลิก', cancelled: 'ยกเลิกแล้ว'
+}
 const tab = ref('pending')
 const authStore = useAuthStore()
 const marketStore = useMarketStore()
@@ -118,12 +121,18 @@ async function clearRejected() {
 const tabs = computed(() => [
   { key: 'pending', label: 'รอตรวจ', count: store.pending.length },
   { key: 'needsSlip', label: 'ขอสลิปใหม่', count: store.needsSlip.length },
+  { key: 'cancelReq', label: 'ขอยกเลิก', count: store.cancelReq.length },
+  { key: 'refundPending', label: 'รอคืนเงิน', count: store.refundPending.length },
+  { key: 'awaiting', label: 'รอชำระเงิน', count: store.awaiting.length },
   { key: 'decided', label: 'ตัดสินแล้ว', count: 0 }
 ])
 const list = computed(() => store[tab.value])
 const emptyText = computed(() => ({
   pending: 'ไม่มีรายการรอตรวจสลิป',
   needsSlip: 'ไม่มีรายการที่รอสลิปใหม่',
+  cancelReq: 'ไม่มีคำขอยกเลิก',
+  refundPending: 'ไม่มีรายการรอคืนเงิน',
+  awaiting: 'ไม่มีการจองที่กันแผงรอผู้เช่าชำระเงิน',
   decided: 'ยังไม่มีรายการที่ตัดสินแล้ว'
 }[tab.value]))
 
@@ -154,7 +163,8 @@ function afterDecided() {
 function openOther(id) {
   const b = store.byId(id)
   if (!b) return
-  tab.value = b.status === 'pending' ? 'pending' : b.status === 'needs_slip' ? 'needsSlip' : 'decided'
+  tab.value = ({ pending: 'pending', needs_slip: 'needsSlip', cancel_requested: 'cancelReq', awaiting_slip: 'awaiting' })[b.status]
+    || (b.status === 'cancelled' && b.refund?.status === 'pending' ? 'refundPending' : 'decided')
   store.selectedId = id
 }
 
@@ -166,7 +176,9 @@ function badgeClass(status) {
     pending: 'text-amber-600 dark:text-amber-400',
     needs_slip: 'text-orange-600 dark:text-orange-400',
     approved: 'text-emerald-600 dark:text-emerald-400',
-    rejected: 'text-rose-600 dark:text-rose-400'
+    rejected: 'text-rose-600 dark:text-rose-400',
+    cancel_requested: 'text-sky-600 dark:text-sky-400',
+    awaiting_slip: 'text-amber-600 dark:text-amber-400'
   }[status] || 'text-slate-500'
 }
 </script>

@@ -76,6 +76,35 @@ service cloud.firestore {
         && (!('lastAuditId' in resource.data) || request.resource.data.lastAuditId != resource.data.lastAuditId);
     }
 
+    // ─── หมดเวลากันแผง (ไม่มี server: rules เป็นตัวตัดสินด้วย request.time) ────────────
+    // การจองที่ยังไม่แนบสลิป (awaiting_slip) หรือถูกขอสลิปใหม่ (needs_slip แบบรายวัน/รอบ) กันแผงได้ holdMinutes นาที
+    // เกินเวลาแล้วถือว่าแผงว่าง: คนอื่นจองทับได้ และเจ้าของส่งสลิปไม่ได้อีก
+    function holdExpired(x) {
+      return x.status in ['awaiting_slip', 'needs_slip']
+        && 'holdStartedAt' in x && 'holdMinutes' in x
+        && request.time > x.holdStartedAt + duration.value(x.holdMinutes, 'm');
+    }
+
+    function marketDocPath() {
+      return /databases/$(database)/documents/markets/main-layout;
+    }
+
+    // เวลากันแผงรอสลิปต้องตรงกับตั้งค่าตลาด (ไม่ตั้ง = 30 นาที) ป้องกันผู้เช่าตั้งเวลายาวเอง
+    function payHoldMinutesOk(m) {
+      return m is int && m >= 10 && m <= 120
+        && m == (exists(marketDocPath()) && 'settings' in get(marketDocPath()).data
+                 && 'paymentHoldMinutes' in get(marketDocPath()).data.settings
+                 ? get(marketDocPath()).data.settings.paymentHoldMinutes : 30);
+    }
+
+    // เวลาให้ส่งสลิปใหม่ (ชั่วโมง x 60) ตรงกับตั้งค่า (ไม่ตั้ง = 24 ชม.)
+    function resubmitMinutesOk(m) {
+      return m is int && m >= 60 && m <= 4320
+        && m == (exists(marketDocPath()) && 'settings' in get(marketDocPath()).data
+                 && 'resubmitHours' in get(marketDocPath()).data.settings
+                 ? get(marketDocPath()).data.settings.resubmitHours * 60 : 1440);
+    }
+
     // ผู้เช่ายกเลิกการจองที่ยังรอตรวจ: ปล่อยแผง pending ของตัวเองกลับเป็น available
     // ต้องยกเลิก booking ในคำสั่งเขียนเดียวกัน (getAfter) กันปล่อยแผงโดยที่ booking ยังอยู่
     function isTenantReleasing() {
@@ -118,21 +147,177 @@ service cloud.firestore {
         && d.slipHash is string
         && d.slipUploadedAt == request.time
         && d.updatedAt == request.time
+        && !holdExpired(r)
         && getAfter(/databases/$(database)/documents/bookingSlips/$(bookingId)).data.createdAt == request.time;
     }
 
-    // ผู้เช่ายกเลิกเอง: เฉพาะ pending / needs_slip และแผงต้องถูกปล่อยพร้อมกัน
+    // ผู้เช่าแนบสลิปครั้งแรกหลังกันแผง: awaiting_slip -> pending ต้องยังไม่หมดเวลา และเขียนสลิปในคำสั่งเดียวกัน
+    function isTenantPaySlip(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && r.tenantId == request.auth.uid
+        && r.status == 'awaiting_slip'
+        && d.status == 'pending'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'slipHash', 'slipUploadedAt', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, ['booking.slip_submit'])
+        && d.slipHash is string
+        && d.slipUploadedAt == request.time
+        && d.updatedAt == request.time
+        && !holdExpired(r)
+        && getAfter(/databases/$(database)/documents/bookingSlips/$(bookingId)).data.createdAt == request.time;
+    }
+
+    // ตั้งสถานะ "หมดเวลา": เจ้าของหรือ admin ทำได้เมื่อหมดเวลากันแผงแล้วเท่านั้น (แก้ได้เฉพาะสถานะ)
+    function isExpireBooking(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && (r.tenantId == request.auth.uid || isAdmin())
+        && holdExpired(r)
+        && d.status == 'expired'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, ['booking.expire'])
+        && d.updatedAt == request.time;
+    }
+
+    // ผู้เช่ายกเลิกเอง: awaiting_slip / pending / needs_slip และแผงต้องถูกปล่อยพร้อมกัน
+    // ยกเลิกตอน pending (ส่งสลิปแล้ว) ตั้ง refund = { status: 'pending' } ให้ admin ตรวจว่าต้องคืนเงินไหม
     function isTenantCancel(bookingId) {
       let d = request.resource.data;
       let r = resource.data;
       return isNotAnonymous()
         && r.tenantId == request.auth.uid
-        && r.status in ['pending', 'needs_slip']
+        && r.status in ['awaiting_slip', 'pending', 'needs_slip']
         && d.status == 'cancelled'
-        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuditId'])
+        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuditId', 'refund'])
+        && (!('refund' in d.diff(r).affectedKeys()) || (r.status == 'pending' && d.refund == {'status': 'pending'}))
         && auditNewFor(bookingId, ['booking.cancel_self'])
         && d.updatedAt == request.time
         && ('slots' in r || getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId)).data.status == 'available');
+    }
+
+    // ผู้เช่าขอยกเลิกการจองที่อนุมัติแล้ว: approved -> cancel_requested (แผงยังเป็นของผู้เช่าจนกว่า admin อนุมัติ)
+    function isTenantCancelRequest(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && r.tenantId == request.auth.uid
+        && r.get('status', '') == 'approved'
+        && d.status == 'cancel_requested'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'cancelRequest', 'updatedAt', 'lastAuditId'])
+        && d.cancelRequest.keys().hasOnly(['reason', 'requestedAt'])
+        && d.cancelRequest.reason is string && d.cancelRequest.reason.size() >= 1 && d.cancelRequest.reason.size() <= 300
+        && d.cancelRequest.requestedAt == request.time
+        && auditNewFor(bookingId, ['booking.cancel_request'])
+        && d.updatedAt == request.time;
+    }
+
+    // ผู้เช่าถอนคำขอยกเลิก: cancel_requested -> approved
+    function isTenantWithdrawCancel(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isNotAnonymous()
+        && r.tenantId == request.auth.uid
+        && r.status == 'cancel_requested'
+        && d.status == 'approved'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'cancelRequest', 'updatedAt', 'lastAuditId'])
+        && !('cancelRequest' in d)
+        && auditNewFor(bookingId, ['booking.cancel_withdraw'])
+        && d.updatedAt == request.time;
+    }
+
+    // เลขใบเสร็จ: เรียงต่อกันด้วย counters/receipts_{ปี พ.ศ.} ที่เพิ่มทีละ 1 ในคำสั่งเดียวกัน ตั้งได้ครั้งเดียว
+    function receiptCounterPath(year) {
+      return /databases/$(database)/documents/counters/$('receipts_' + string(year));
+    }
+
+    function receiptValid(d) {
+      return d.receiptYear is int && d.receiptYear >= 2560 && d.receiptYear <= 2700
+        && d.receiptSeq is int && d.receiptSeq >= 1
+        && d.receiptNo is string
+        && d.receiptNo.matches('^R[0-9]{4}-[0-9]{6}$')
+        && d.receiptNo.split('-')[0] == 'R' + string(d.receiptYear)
+        && int(d.receiptNo.split('-')[1]) == d.receiptSeq
+        && d.receiptIssuedAt == request.time
+        && getAfter(receiptCounterPath(d.receiptYear)).data.next == d.receiptSeq
+        && (exists(receiptCounterPath(d.receiptYear))
+            ? get(receiptCounterPath(d.receiptYear)).data.next + 1 == d.receiptSeq
+            : d.receiptSeq == 1);
+    }
+
+    // ออกเลขใบเสร็จให้การจองเก่าที่อนุมัติไปก่อนมีระบบนี้ (admin เท่านั้น ตั้งได้ครั้งเดียว)
+    function isReceiptIssue(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isAdmin()
+        && (r.status == 'approved' || (r.status == 'cancelled' && r.get('wasApproved', false) == true) || !('status' in r))
+        && !('receiptNo' in r)
+        && d.diff(r).affectedKeys().hasOnly(['receiptNo', 'receiptSeq', 'receiptYear', 'receiptIssuedAt', 'updatedAt', 'lastAuditId'])
+        && receiptValid(d)
+        && auditNewFor(bookingId, ['booking.receipt_issue'])
+        && d.updatedAt == request.time;
+    }
+
+    function refundShapeOk(rf, r) {
+      return rf is map
+        && rf.keys().hasOnly(['status', 'amount', 'suggestedAmount', 'policyText', 'adjustReason'])
+        && rf.status in ['pending', 'none']
+        && rf.amount is number && rf.amount >= 0 && rf.amount <= r.amountDue
+        && (rf.status == 'pending' || rf.amount == 0)
+        && (!('suggestedAmount' in rf) || (rf.suggestedAmount is number && rf.suggestedAmount >= 0 && rf.suggestedAmount <= r.amountDue))
+        && (!('policyText' in rf) || (rf.policyText is string && rf.policyText.size() <= 300))
+        && ((!('suggestedAmount' in rf) || rf.suggestedAmount == rf.amount)
+            || (rf.get('adjustReason', '') is string && rf.get('adjustReason', '').size() >= 1 && rf.get('adjustReason', '').size() <= 300));
+    }
+
+    // admin/owner จัดการคำขอยกเลิก / ยกเลิกการจองที่อนุมัติแล้วเอง
+    //  cancel_requested -> cancelled (cancel_approve) | -> approved (cancel_deny, ต้องมีเหตุผล)
+    //  approved -> cancelled (cancel_admin, ต้องมีเหตุผล)
+    function isAdminCancelDecision(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isAdmin()
+        && 'status' in r
+        && ((r.status == 'cancel_requested' && d.status in ['cancelled', 'approved'])
+            || (r.status == 'approved' && d.status == 'cancelled'))
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'refund', 'cancelRequest', 'releasedSlots',
+             'wasApproved', 'decidedBy', 'decidedAt', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, [r.status == 'approved' ? 'booking.cancel_admin'
+             : (d.status == 'cancelled' ? 'booking.cancel_approve' : 'booking.cancel_deny')])
+        && d.decidedBy == request.auth.uid
+        && d.decidedAt == request.time
+        && d.updatedAt == request.time
+        && (d.status == 'approved'
+            ? (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300 && !('cancelRequest' in d))
+            : (d.wasApproved == true
+               && refundShapeOk(d.refund, r)
+               && (r.status == 'cancel_requested'
+                   || (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300))
+               && (!('releasedSlots' in d)
+                   || ('slots' in r && d.releasedSlots is list && d.releasedSlots.size() <= 7 && r.slots.hasAll(d.releasedSlots)))));
+    }
+
+    // admin/owner บันทึกว่าคืนเงินแล้ว: refund.status pending -> refunded (ยอดไม่เกินยอดที่จ่าย)
+    function isRefundRecord(bookingId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return isAdmin()
+        && r.status == 'cancelled'
+        && 'refund' in r && r.refund.status == 'pending'
+        && d.status == 'cancelled'
+        && d.diff(r).affectedKeys().hasOnly(['refund', 'updatedAt', 'lastAuditId'])
+        && d.refund.keys().hasOnly(['status', 'amount', 'suggestedAmount', 'policyText', 'adjustReason',
+             'method', 'refundedDate', 'note', 'refundedBy', 'refundedAt'])
+        && d.refund.status == 'refunded'
+        && d.refund.amount is number && d.refund.amount >= 0 && d.refund.amount <= r.amountDue
+        && d.refund.method in ['transfer', 'promptpay', 'cash']
+        && d.refund.refundedDate is string && d.refund.refundedDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && (!('note' in d.refund) || (d.refund.note is string && d.refund.note.size() <= 300))
+        && d.refund.refundedBy == request.auth.uid
+        && d.refund.refundedAt == request.time
+        && auditNewFor(bookingId, ['refund.record'])
+        && d.updatedAt == request.time;
     }
 
     function isValidDecision(bookingId) {
@@ -141,12 +326,18 @@ service cloud.firestore {
       let stallPath = /databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId);
       return (r.status == 'pending' || (r.status == 'needs_slip' && d.status == 'rejected'))
         && d.status in ['approved', 'needs_slip', 'rejected']
-        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'decidedBy', 'decidedAt', 'updatedAt', 'lastAuditId'])
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'decidedBy', 'decidedAt', 'updatedAt', 'lastAuditId',
+             'holdStartedAt', 'holdMinutes', 'receiptNo', 'receiptSeq', 'receiptYear', 'receiptIssuedAt'])
         && auditNewFor(bookingId, [d.status == 'approved' ? 'booking.approve' : (d.status == 'rejected' ? 'booking.reject' : 'booking.request_slip')])
         && d.decidedBy == request.auth.uid
         && d.decidedAt == request.time
         && (d.status == 'approved'
             || (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300))
+        // ขอสลิปใหม่ของการจองรายวัน/รอบ: ตั้งเวลานับถอยหลังใหม่ (หมดเวลาแล้วช่องกลับว่าง)
+        && (!('holdStartedAt' in d.diff(r).affectedKeys()) || ('slots' in r && d.status == 'needs_slip'
+             && d.holdStartedAt == request.time && resubmitMinutesOk(d.holdMinutes)))
+        // ใบเสร็จออกตอนอนุมัติ (ไม่บังคับ เพื่อให้หน้าเว็บเวอร์ชันเก่ายังอนุมัติได้)
+        && (!('receiptNo' in d.diff(r).affectedKeys()) || (d.status == 'approved' && !('receiptNo' in r) && receiptValid(d)))
         && ('slots' in r || getAfter(stallPath).data.status == (d.status == 'approved' ? 'booked' : (d.status == 'rejected' ? 'available' : 'pending')));
     }
 
@@ -180,6 +371,7 @@ service cloud.firestore {
         || getAfter(slotLockPath(d.stallId, d.slots[i])).data.bookingId == bookingId;
     }
 
+    // สร้างได้ 2 แบบ: pending (แนบสลิปมาด้วย) หรือ awaiting_slip (กันแผงไว้ก่อน ส่งสลิปทีหลังภายใน holdMinutes)
     function slotBookingCreate(bookingId) {
       let d = request.resource.data;
       let stall = get(/databases/$(database)/documents/markets/main-layout/stalls/$(d.stallId)).data;
@@ -192,15 +384,20 @@ service cloud.firestore {
         && d.amountDue == d.totalAmount
         && d.firstDate == d.slots[0].split('_')[0]
         && d.lastDate == d.slots[d.slots.size() - 1].split('_')[0]
-        && d.status == 'pending'
+        && d.status in ['pending', 'awaiting_slip']
         && d.createdAt == request.time
-        && d.slipUploadedAt == request.time
-        && d.slipHash is string
         && d.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone', 'shopName', 'goodsType',
              'slots', 'firstDate', 'lastDate', 'pricePerSlot', 'totalAmount', 'amountDue',
-             'slipHash', 'slipUploadedAt', 'createdAt', 'status', 'lastAuditId'])
+             'slipHash', 'slipUploadedAt', 'createdAt', 'status', 'lastAuditId', 'holdStartedAt', 'holdMinutes'])
+        && (d.status == 'pending'
+            ? (d.slipUploadedAt == request.time
+               && d.slipHash is string
+               && !('holdStartedAt' in d) && !('holdMinutes' in d)
+               && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId)))
+            : (d.holdStartedAt == request.time
+               && payHoldMinutesOk(d.holdMinutes)
+               && !('slipHash' in d) && !('slipUploadedAt' in d)))
         && auditLinked(bookingId, ['booking.create'])
-        && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId))
         && slotLockOk(d, bookingId, 0) && slotLockOk(d, bookingId, 1) && slotLockOk(d, bookingId, 2)
         && slotLockOk(d, bookingId, 3) && slotLockOk(d, bookingId, 4) && slotLockOk(d, bookingId, 5)
         && slotLockOk(d, bookingId, 6);
@@ -219,7 +416,14 @@ service cloud.firestore {
       // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน
       allow update: if (isAdmin() && isValidDecision(bookingId))
         || isTenantResubmit(bookingId)
-        || isTenantCancel(bookingId);
+        || isTenantPaySlip(bookingId)
+        || isTenantCancel(bookingId)
+        || isExpireBooking(bookingId)
+        || isTenantCancelRequest(bookingId)
+        || isTenantWithdrawCancel(bookingId)
+        || isAdminCancelDecision(bookingId)
+        || isRefundRecord(bookingId)
+        || isReceiptIssue(bookingId);
       // ลบได้เฉพาะรายการที่ปฏิเสธ/ยกเลิกแล้ว (แผงถูกปล่อยไปแล้ว) ไม่ลบการจองที่อนุมัติ เพราะแผงยังเป็นของผู้เช่า
       allow delete: if isAdmin() && resource.data.status in ['rejected', 'cancelled'];
     }
@@ -228,31 +432,54 @@ service cloud.firestore {
     // id = {stallId}_{slotKey} สร้างได้อย่างเดียว (มีแล้วสร้างซ้ำไม่ได้ = จองซ้ำไม่ได้)
     // ไม่มีข้อมูลส่วนตัว (มีแค่ชื่อร้าน/ประเภทสินค้าที่ผู้จองเปิดเผยให้ลูกค้าอื่นเห็น) อ่านได้ทุกคน
     // เปลี่ยนสถานะ/ลบ: admin; ผู้เช่าลบได้เฉพาะตอนยกเลิกการจองของตัวเองในคำสั่งเดียวกัน
+    // lock ใหม่: status ตรงกับสถานะการจองในคำสั่งเดียวกัน (pending = แนบสลิปแล้ว | awaiting_slip = กันแผงรอสลิป)
+    function lockShapeOk(lockId, l) {
+      let bk = getAfter(/databases/$(database)/documents/bookings/$(l.bookingId)).data;
+      return l.keys().hasOnly(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId',
+             'status', 'shopName', 'goodsType', 'createdAt', 'holdStartedAt', 'holdMinutes'])
+        && l.keys().hasAll(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId', 'status', 'createdAt'])
+        && l.status in ['pending', 'awaiting_slip']
+        && l.status == bk.status
+        && (l.status == 'pending'
+            ? (!('holdStartedAt' in l) && !('holdMinutes' in l))
+            : (l.holdStartedAt == request.time && l.holdMinutes == bk.holdMinutes && l.holdMinutes is int))
+        && l.slotKey is string
+        && l.slotKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}_[a-z0-9]{1,20}$')
+        && l.slotKey == l.date + '_' + l.roundId
+        && lockId == l.stallId + '_' + l.slotKey
+        && l.createdAt == request.time
+        && (!('shopName' in l) || (l.shopName is string && l.shopName.size() <= 60))
+        && (!('goodsType' in l) || (l.goodsType is string && l.goodsType.size() <= 60))
+        && get(/databases/$(database)/documents/markets/main-layout/stalls/$(l.stallId)).data.status == 'available'
+        && bk.tenantId == request.auth.uid
+        && bk.stallId == l.stallId
+        && l.slotKey in bk.slots;
+    }
+
+    // ผู้เช่าส่งสลิปแล้ว: lock ของตัวเองจาก awaiting_slip / needs_slip กลับเป็น pending (พร้อม booking -> pending)
+    function lockFlipToPending() {
+      return isNotAnonymous()
+        && resource.data.status in ['awaiting_slip', 'needs_slip']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status == 'pending'
+        && get(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.tenantId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status == 'pending';
+    }
+
     match /bookingLocks/{lockId} {
       allow read: if true;
-      allow create: if isNotAnonymous()
-        && request.resource.data.keys().hasOnly(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId',
-             'status', 'shopName', 'goodsType', 'createdAt'])
-        && request.resource.data.keys().hasAll(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId', 'status', 'createdAt'])
-        && request.resource.data.status == 'pending'
-        && request.resource.data.slotKey is string
-        && request.resource.data.slotKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}_[a-z0-9]{1,20}$')
-        && request.resource.data.slotKey == request.resource.data.date + '_' + request.resource.data.roundId
-        && lockId == request.resource.data.stallId + '_' + request.resource.data.slotKey
-        && request.resource.data.createdAt == request.time
-        && (!('shopName' in request.resource.data)
-            || (request.resource.data.shopName is string && request.resource.data.shopName.size() <= 60))
-        && (!('goodsType' in request.resource.data)
-            || (request.resource.data.goodsType is string && request.resource.data.goodsType.size() <= 60))
-        && get(/databases/$(database)/documents/markets/main-layout/stalls/$(request.resource.data.stallId)).data.status == 'available'
-        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.tenantId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.stallId == request.resource.data.stallId
-        && request.resource.data.slotKey in getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.slots;
-      allow update: if isAdmin();
+      allow create: if isNotAnonymous() && lockShapeOk(lockId, request.resource.data);
+      // admin เปลี่ยนสถานะได้; จองทับ lock ที่หมดเวลาแล้ว (เขียนทับด้วย lock ใหม่ที่ถูกต้องครบ); ผู้เช่าส่งสลิปแล้วพลิกเป็น pending
+      allow update: if isAdmin()
+        || (isNotAnonymous() && holdExpired(resource.data) && lockShapeOk(lockId, request.resource.data))
+        || lockFlipToPending();
+      // ลบ: admin | เจ้าของเมื่อยกเลิกการจองของตัวเอง | เจ้าของเมื่อการจองหมดเวลาแล้ว (lock หมดอายุจริง)
       allow delete: if isAdmin()
         || (isNotAnonymous()
             && get(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.tenantId == request.auth.uid
-            && getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status == 'cancelled');
+            && (getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status == 'cancelled'
+                || (getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status == 'expired'
+                    && holdExpired(resource.data))));
     }
 
     // ─── Booking Slips (รูปสลิป แยกจาก bookings เพื่อไม่ให้รายการจองหนัก) ───────
@@ -289,11 +516,13 @@ service cloud.firestore {
       return ['booking.create', 'booking.slip_submit', 'booking.approve', 'booking.request_slip', 'booking.reject',
               'booking.cancel_self', 'booking.cancel_request', 'booking.cancel_approve', 'booking.cancel_deny',
               'booking.cancel_admin', 'booking.expire', 'refund.record', 'settings.update', 'stall.close',
-              'stall.open', 'user.role_change', 'legacy.end', 'booking.delete'];
+              'stall.open', 'user.role_change', 'legacy.end', 'booking.delete', 'booking.cancel_withdraw',
+              'booking.receipt_issue', 'report.export'];
     }
 
     function auditTenantActions() {
-      return ['booking.create', 'booking.slip_submit', 'booking.cancel_self', 'booking.cancel_request'];
+      return ['booking.create', 'booking.slip_submit', 'booking.cancel_self', 'booking.cancel_request',
+              'booking.cancel_withdraw', 'booking.expire'];
     }
 
     match /auditLogs/{auditId} {
@@ -322,6 +551,49 @@ service cloud.firestore {
                && request.resource.data.targetType == 'booking'
                && request.resource.data.bookingId == request.resource.data.targetId
                && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.tenantId == request.auth.uid));
+    }
+
+    // ─── Counters (เลขใบเสร็จ) ───────────────────────────────────────────────
+    // counters/receipts_{ปี พ.ศ.} { year, next } เพิ่มทีละ 1 เท่านั้น (admin) ข้ามเลข/ลดเลขไม่ได้
+    match /counters/{counterId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && counterId.matches('^receipts_[0-9]{4}$')
+        && request.resource.data.keys().hasOnly(['year', 'next'])
+        && request.resource.data.next == 1
+        && counterId == 'receipts_' + string(request.resource.data.year);
+      allow update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['year', 'next'])
+        && request.resource.data.year == resource.data.year
+        && request.resource.data.next == resource.data.next + 1;
+      allow delete: if false;
+    }
+
+    // ─── บัญชีรับเงินคืน (แยกจาก booking ไม่ให้ไปโผล่ในรายการ/รายงาน) ─────────────
+    match /refundAccounts/{bookingId} {
+      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
+      allow create, update: if isNotAnonymous()
+        && request.resource.data.tenantId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['tenantId', 'accountName', 'bank', 'accountNo'])
+        && request.resource.data.accountName is string && request.resource.data.accountName.size() <= 100
+        && request.resource.data.bank is string && request.resource.data.bank.size() <= 60
+        && request.resource.data.accountNo is string && request.resource.data.accountNo.size() <= 40
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.tenantId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'cancel_requested';
+      allow delete: if isAdmin();
+    }
+
+    // ─── สลิปคืนเงิน (admin อัปโหลด เจ้าของการจองดูได้) ─────────────────────────
+    match /refundSlips/{bookingId} {
+      allow read: if isSignedIn() && (resource.data.tenantId == request.auth.uid || isAdmin());
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['tenantId', 'marketId', 'dataUrl', 'mime', 'bytes', 'createdAt'])
+        && request.resource.data.tenantId == get(/databases/$(database)/documents/bookings/$(bookingId)).data.tenantId
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() < 750000
+        && request.resource.data.dataUrl.matches('^data:image/(webp|jpeg);base64,.*')
+        && request.resource.data.createdAt == request.time;
+      allow delete: if isAdmin();
     }
 
     // ─── Users ───────────────────────────────────────────────────────────────

@@ -8,7 +8,8 @@ import { addAuditToBatch } from './auditLog'
 const MARKET_ID = 'main-layout'
 const marketRef = () => doc(db, 'markets', MARKET_ID)
 
-const SETTING_KEYS = ['openWeekdays', 'closedDates', 'extraOpenDates', 'maxAdvanceDays', 'bookingCutoffTime', 'maxSlotsPerBooking', 'rounds']
+const SETTING_KEYS = ['openWeekdays', 'closedDates', 'extraOpenDates', 'maxAdvanceDays', 'bookingCutoffTime', 'maxSlotsPerBooking', 'rounds',
+  'paymentHoldMinutes', 'resubmitHours', 'cancelPolicy', 'receipt']
 
 /**
  * ฟังตั้งค่าตลาด (markets/main-layout.settings) แบบ realtime
