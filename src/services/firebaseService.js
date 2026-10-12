@@ -477,3 +477,33 @@ export async function cancelMyBooking(bookingId) {
     }
   })
 }
+
+/**
+ * (admin) ลบรายการจองที่ปฏิเสธ/ยกเลิกแล้วออกจากรายการ (พร้อมรูปสลิป) + audit log ใน batch เดียวกัน
+ * ไม่ลบรายการ approved (แผงยังเป็นของผู้เช่า) rules บังคับซ้ำ
+ * @param {Array<{id, status, stallNo}>} bookings
+ * @returns {Promise<number>} จำนวนที่ลบ
+ */
+export async function deleteDecidedBookings(bookings, actor) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  const targets = bookings.filter(b => ['rejected', 'cancelled'].includes(b.status))
+  const CHUNK = 100 // 1 รายการ = 3 การเขียน (booking, สลิป, log)
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const batch = writeBatch(db)
+    for (const b of targets.slice(i, i + CHUNK)) {
+      addAuditToBatch(batch, {
+        actor,
+        action: 'booking.delete',
+        targetType: 'booking',
+        targetId: b.id,
+        bookingId: b.id,
+        marketId: MARKET_ID,
+        before: { status: b.status, stallNo: b.stallNo || null }
+      })
+      batch.delete(doc(db, 'bookings', b.id))
+      batch.delete(slipRef(b.id))
+    }
+    await batch.commit()
+  }
+  return targets.length
+}

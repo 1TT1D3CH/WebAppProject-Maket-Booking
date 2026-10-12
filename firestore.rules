@@ -169,7 +169,8 @@ service cloud.firestore {
       allow update: if (isAdmin() && isValidDecision(bookingId))
         || isTenantResubmit(bookingId)
         || isTenantCancel(bookingId);
-      allow delete: if isAdmin();
+      // ลบได้เฉพาะรายการที่ปฏิเสธ/ยกเลิกแล้ว (แผงถูกปล่อยไปแล้ว) ไม่ลบการจองที่อนุมัติ เพราะแผงยังเป็นของผู้เช่า
+      allow delete: if isAdmin() && resource.data.status in ['rejected', 'cancelled'];
     }
 
     // ─── Booking Slips (รูปสลิป แยกจาก bookings เพื่อไม่ให้รายการจองหนัก) ───────
@@ -206,7 +207,7 @@ service cloud.firestore {
       return ['booking.create', 'booking.slip_submit', 'booking.approve', 'booking.request_slip', 'booking.reject',
               'booking.cancel_self', 'booking.cancel_request', 'booking.cancel_approve', 'booking.cancel_deny',
               'booking.cancel_admin', 'booking.expire', 'refund.record', 'settings.update', 'stall.close',
-              'stall.open', 'user.role_change', 'legacy.end'];
+              'stall.open', 'user.role_change', 'legacy.end', 'booking.delete'];
     }
 
     function auditTenantActions() {

@@ -10,6 +10,12 @@
           <h2 class="text-base font-bold text-slate-900 dark:text-white">ตรวจสลิปโอนเงิน</h2>
           <span class="text-[11px] text-slate-500 dark:text-slate-400">รอตรวจ {{ store.pendingCount }} รายการ</span>
         </div>
+        <button
+          v-if="tab === 'decided' && store.rejectedList.length"
+          type="button" :disabled="clearing"
+          class="w-full mb-2 min-h-[44px] rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-semibold"
+          @click="clearRejected"
+        >{{ clearing ? 'กำลังลบ...' : `ล้างรายการที่ปฏิเสธทั้งหมด (${store.rejectedList.length})` }}</button>
         <div class="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-950">
           <button
             v-for="t in tabs" :key="t.key" type="button"
@@ -74,12 +80,35 @@ import SlipReviewDetail from './slip/SlipReviewDetail.vue'
 import { useSlipReviewStore } from '../../stores/slipReviewStore'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { formatThaiDateTime } from '../../utils/date'
+import { useAuthStore } from '../../stores/authStore'
+import { useMarketStore } from '../../stores/marketStore'
 
 const store = useSlipReviewStore()
 const { isDesktop } = useBreakpoint()
 
 const STATUS_LABEL = { pending: 'รอตรวจ', needs_slip: 'ขอสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว' }
 const tab = ref('pending')
+const authStore = useAuthStore()
+const marketStore = useMarketStore()
+const clearing = ref(false)
+
+// ลบรายการที่ปฏิเสธแล้วทั้งหมดออกจากรายการ (ส่วนที่อนุมัติแล้วไม่ถูกลบ เพราะแผงยังเป็นของผู้เช่า)
+async function clearRejected() {
+  const items = store.rejectedList
+  if (!items.length || clearing.value) return
+  if (!window.confirm(`ลบรายการที่ปฏิเสธแล้ว ${items.length} รายการ (รวมรูปสลิป)?
+ลบแล้วกู้คืนไม่ได้ แต่ยังมีบันทึกใน "บันทึกการทำงาน"`)) return
+  clearing.value = true
+  try {
+    const n = await store.removeDecided(items, authStore.auditActor)
+    marketStore.showNotification(`ลบรายการที่ปฏิเสธแล้ว ${n} รายการ`, 'success')
+  } catch (err) {
+    console.error('Clear rejected error:', err)
+    marketStore.showNotification(err.code === 'permission-denied' ? 'ไม่มีสิทธิ์ลบ (หรือ rules ยังไม่ได้ deploy)' : (err.message || 'ลบไม่สำเร็จ'), 'error')
+  } finally {
+    clearing.value = false
+  }
+}
 
 const tabs = computed(() => [
   { key: 'pending', label: 'รอตรวจ', count: store.pending.length },

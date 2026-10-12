@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip } from '../services/firebaseService'
+import { subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip, deleteDecidedBookings } from '../services/firebaseService'
 import { getSlip } from '../services/slipStorage'
 
 function describeError(err) {
@@ -24,6 +24,8 @@ export const useSlipReviewStore = defineStore('slipReview', {
   getters: {
     pendingCount: (s) => s.pending.length,
     isLoading: (s) => !(s.loaded.pending && s.loaded.needsSlip && s.loaded.decided),
+    // รายการที่ปฏิเสธแล้ว (ลบออกจากรายการได้)
+    rejectedList: (s) => s.decided.filter(b => b.status === 'rejected'),
     byId: (s) => (id) => [...s.pending, ...s.needsSlip, ...s.decided].find(b => b.id === id) || null
   },
 
@@ -89,6 +91,14 @@ export const useSlipReviewStore = defineStore('slipReview', {
 
     async decide(booking, decision, reason, actor) {
       await decideBooking({ bookingId: booking.id, decision, reason, actor })
+    },
+
+    /** ลบรายการที่ปฏิเสธ/ยกเลิกแล้ว คืนจำนวนที่ลบ */
+    async removeDecided(bookings, actor) {
+      const n = await deleteDecidedBookings(bookings, actor)
+      for (const b of bookings) delete this.slipCache[this.slipKey(b.id)]
+      if (bookings.some(b => b.id === this.selectedId)) this.selectedId = null
+      return n
     }
   }
 })

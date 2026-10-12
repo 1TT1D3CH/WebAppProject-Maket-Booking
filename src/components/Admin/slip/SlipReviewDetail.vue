@@ -85,6 +85,13 @@
       <p v-if="actionError" class="mt-2 text-xs text-rose-600 dark:text-rose-400 font-medium">{{ actionError }}</p>
     </footer>
 
+    <footer v-if="booking.status === 'rejected'" class="shrink-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <button type="button" class="btn w-full bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800" :disabled="busy" @click="removeThis">
+        {{ busy ? 'กำลังลบ...' : 'ลบรายการนี้ออกจากรายการ' }}
+      </button>
+      <p v-if="actionError" class="mt-2 text-xs text-rose-600 dark:text-rose-400 font-medium">{{ actionError }}</p>
+    </footer>
+
     <SlipImageViewer v-if="fullscreen && slip" :src="slip.dataUrl" fullscreen @close="fullscreen = false" />
   </div>
 </template>
@@ -191,6 +198,24 @@ watch(() => [props.booking.id, props.booking.slipHash, props.booking.slipUploade
   loadSlip()
   loadDuplicates()
 }, { immediate: true })
+
+async function removeThis() {
+  if (busy.value) return
+  if (!window.confirm(`ลบรายการจองแผง ${props.booking.stallNo || '-'} ที่ปฏิเสธแล้ว (รวมรูปสลิป)?
+ลบแล้วกู้คืนไม่ได้`)) return
+  busy.value = true
+  actionError.value = ''
+  try {
+    await store.removeDecided([props.booking], authStore.auditActor)
+    marketStore.showNotification('ลบรายการแล้ว', 'success')
+    emit('decided')
+  } catch (err) {
+    console.error('Delete booking error:', err)
+    actionError.value = err.code === 'permission-denied' ? 'ไม่มีสิทธิ์ลบ (หรือ rules ยังไม่ได้ deploy)' : (err.message || 'ลบไม่สำเร็จ')
+  } finally {
+    busy.value = false
+  }
+}
 
 function openReason(mode) { reasonMode.value = mode; reason.value = ''; actionError.value = '' }
 function closeReason() { reasonMode.value = ''; reason.value = '' }

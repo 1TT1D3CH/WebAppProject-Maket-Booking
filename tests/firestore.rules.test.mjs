@@ -749,3 +749,46 @@ describe('audit log (บันทึกการทำงาน)', () => {
     await assertSucceeds(batch.commit())
   })
 })
+
+describe('ลบรายการจองที่ตัดสินแล้ว', () => {
+  const seed = async (status) => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, 'bookings/bk1'), { tenantId: 'alice', stallId: 's1', stallNo: 'A1', amountDue: 500, status })
+      await setDoc(doc(db, 'bookingSlips/bk1'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: 'data:image/webp;base64,UklGRg==', mime: 'image/webp', bytes: 10 })
+    })
+  }
+  const remove = (uid) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    addAudit(batch, db, uid, 'booking.delete', 'bk1')
+    batch.delete(doc(db, 'bookings/bk1'))
+    batch.delete(doc(db, 'bookingSlips/bk1'))
+    return batch.commit()
+  }
+
+  test('admin ลบรายการที่ปฏิเสธ/ยกเลิกแล้ว (พร้อมสลิปและ log) ได้', async () => {
+    await seed('rejected')
+    await assertSucceeds(remove('admin1'))
+  })
+
+  test('owner ลบรายการที่ยกเลิกแล้วได้', async () => {
+    await seed('cancelled')
+    await assertSucceeds(remove('owner1'))
+  })
+
+  test('ลบรายการที่อนุมัติ/รอตรวจ ไม่ได้', async () => {
+    await seed('approved')
+    await assertFails(remove('admin1'))
+  })
+
+  test('ลบรายการที่รอตรวจไม่ได้', async () => {
+    await seed('pending')
+    await assertFails(remove('admin1'))
+  })
+
+  test('ผู้เช่าลบไม่ได้', async () => {
+    await seed('rejected')
+    await assertFails(remove('alice'))
+  })
+})

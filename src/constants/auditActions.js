@@ -16,7 +16,8 @@ export const AUDIT_ACTIONS = {
   'stall.close': 'ปิดแผง',
   'stall.open': 'เปิดแผง',
   'user.role_change': 'เปลี่ยนสิทธิ์ผู้ใช้',
-  'legacy.end': 'สิ้นสุดการจองแบบเดิม'
+  'legacy.end': 'สิ้นสุดการจองแบบเดิม',
+  'booking.delete': 'ลบรายการจองที่ตัดสินแล้ว'
 }
 
 export const AUDIT_ACTION_KEYS = Object.keys(AUDIT_ACTIONS)
