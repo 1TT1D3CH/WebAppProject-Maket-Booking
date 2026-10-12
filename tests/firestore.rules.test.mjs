@@ -287,6 +287,17 @@ describe('bookings (B1, B9)', () => {
     await assertSucceeds(bookBatch())
   })
 
+  test('admin/owner จองแผงเองได้ (log ระบุ role จริงของตัวเอง) แต่ระบุว่าเป็น tenant ไม่ผ่าน', async () => {
+    await assertSucceeds(bookBatch({ uid: 'admin1', id: 'bk-adm' }))
+    const db = tenant('owner1')
+    const batch = writeBatch(db)
+    const lastAuditId = addAudit(batch, db, 'owner1', 'booking.create', 'bk-own', { actorRole: 'tenant' })
+    batch.update(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('owner1', 'bk-own'), updatedAt: 'x' })
+    batch.set(doc(db, 'bookings/bk-own'), newBooking({ tenantId: 'owner1', lastAuditId }))
+    batch.set(doc(db, 'bookingSlips/bk-own'), slipDoc({ tenantId: 'owner1' }))
+    await assertFails(batch.commit())
+  })
+
   test('จองพร้อมสลิปขนาดจริง (~700,000 ตัวอักษร) สำเร็จ', async () => {
     await assertSucceeds(bookBatch({ slip: { dataUrl: 'data:image/webp;base64,' + 'A'.repeat(699000) } }))
   })

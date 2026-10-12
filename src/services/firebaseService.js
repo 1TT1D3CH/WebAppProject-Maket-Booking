@@ -18,9 +18,18 @@ import { toPublicBookedBy, PUBLIC_TEXT_MAX } from '../utils/stallSync'
 import { slipRef, buildSlipDoc } from './slipStorage'
 import { keepAlive } from '../utils/keepAlive'
 import { addAuditToBatch } from './auditLog'
+import { useAuthStore } from '../stores/authStore'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
+
+// ผู้ทำรายการที่เป็นเจ้าของการจองเอง: role ต้องตรงกับ users/{uid}.role จริง (rules ตรวจ)
+// admin/owner ที่ลองจองเองจึงต้องส่ง role ของตัวเอง ไม่ใช่ 'tenant'
+const selfActor = (uid, name) => {
+  const auth = useAuthStore()
+  const role = auth.currentUser?.uid === uid && auth.userRole ? auth.userRole : 'tenant'
+  return { uid, name, role }
+}
 
 const marketRef = () => doc(db, 'markets', MARKET_ID)
 const stallsCol = () => collection(db, 'markets', MARKET_ID, 'stalls')
@@ -191,7 +200,7 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
     })
 
     const auditId = addAuditToBatch(transaction, {
-      actor: { uid: customerInfo.tenantId, name: customerInfo.name, role: 'tenant' },
+      actor: selfActor(customerInfo.tenantId, customerInfo.name),
       action: 'booking.create',
       targetType: 'booking',
       targetId: bookingRef.id,
@@ -408,7 +417,7 @@ export async function resubmitSlip({ bookingId, tenantId, tenantName = '', slip 
       throw err
     }
     const auditId = addAuditToBatch(tx, {
-      actor: { uid: tenantId, name: tenantName || snap.data().customerName, role: 'tenant' },
+      actor: selfActor(tenantId, tenantName || snap.data().customerName),
       action: 'booking.slip_submit',
       targetType: 'booking',
       targetId: bookingId,
@@ -453,7 +462,7 @@ export async function cancelMyBooking(bookingId) {
     const sSnap = await tx.get(stallRef)
     if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้')
     const auditId = addAuditToBatch(tx, {
-      actor: { uid: b.tenantId, name: b.customerName, role: 'tenant' },
+      actor: selfActor(b.tenantId, b.customerName),
       action: 'booking.cancel_self',
       targetType: 'booking',
       targetId: bookingId,
