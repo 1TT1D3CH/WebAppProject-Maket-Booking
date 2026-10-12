@@ -27,6 +27,9 @@
       <!-- ตรวจสลิปโอนเงิน (owner/admin only) -->
       <SlipReviewPanel v-else-if="marketStore.activeMode === 'slips' && authStore.isAdmin" />
 
+      <!-- บันทึกการทำงาน / audit log (owner/admin only) -->
+      <AuditLogPanel v-else-if="marketStore.activeMode === 'audit' && authStore.isAdmin" />
+
       <!-- Customer Interactive Booking View -->
       <CustomerStallMap 
         v-else
@@ -145,6 +148,7 @@ import NotificationCenter from './components/Auth/NotificationCenter.vue'
 import ChangePasswordModal from './components/Auth/ChangePasswordModal.vue'
 import MembersPanel from './components/Admin/MembersPanel.vue'
 import SlipReviewPanel from './components/Admin/SlipReviewPanel.vue'
+import AuditLogPanel from './components/Admin/AuditLogPanel.vue'
 import MyBookingsModal from './components/Customer/MyBookingsModal.vue'
 import { useMyBookingsStore } from './stores/myBookingsStore'
 import { useSlipReviewStore } from './stores/slipReviewStore'

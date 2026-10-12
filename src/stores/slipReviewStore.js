@@ -87,8 +87,8 @@ export const useSlipReviewStore = defineStore('slipReview', {
       return findBookingsWithSameSlip(booking.slipHash, booking.id)
     },
 
-    async decide(booking, decision, reason, adminUid) {
-      await decideBooking({ bookingId: booking.id, decision, reason, adminUid })
+    async decide(booking, decision, reason, actor) {
+      await decideBooking({ bookingId: booking.id, decision, reason, actor })
     }
   }
 })

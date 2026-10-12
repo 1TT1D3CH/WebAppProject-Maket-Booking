@@ -49,6 +49,26 @@ service cloud.firestore {
       }
     }
 
+    // ─── Audit log helpers ───────────────────────────────────────────────────
+    // การเปลี่ยนสถานะการจองต้องชี้ lastAuditId ไปยัง log ที่เขียนในคำสั่งเดียวกัน
+    // (ผู้กระทำ/เวลา/เป้าหมาย/action ตรงกับการกระทำ) ไม่มี log = การกระทำไม่ผ่าน
+    function auditLinked(bookingId, actions) {
+      let id = request.resource.data.lastAuditId;
+      return id is string
+        && existsAfter(/databases/$(database)/documents/auditLogs/$(id))
+        && getAfter(/databases/$(database)/documents/auditLogs/$(id)).data.targetType == 'booking'
+        && getAfter(/databases/$(database)/documents/auditLogs/$(id)).data.targetId == bookingId
+        && getAfter(/databases/$(database)/documents/auditLogs/$(id)).data.actorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/auditLogs/$(id)).data.at == request.time
+        && getAfter(/databases/$(database)/documents/auditLogs/$(id)).data.action in actions;
+    }
+
+    // update: ต้องเป็น log ใหม่ (ไม่ใช่ log เดิมของการกระทำก่อนหน้า) การจองเก่าที่ยังไม่มี lastAuditId ผ่านได้
+    function auditNewFor(bookingId, actions) {
+      return auditLinked(bookingId, actions)
+        && (!('lastAuditId' in resource.data) || request.resource.data.lastAuditId != resource.data.lastAuditId);
+    }
+
     // ผู้เช่ายกเลิกการจองที่ยังรอตรวจ: ปล่อยแผง pending ของตัวเองกลับเป็น available
     // ต้องยกเลิก booking ในคำสั่งเขียนเดียวกัน (getAfter) กันปล่อยแผงโดยที่ booking ยังอยู่
     function isTenantReleasing() {
@@ -85,7 +105,8 @@ service cloud.firestore {
         && r.tenantId == request.auth.uid
         && r.status == 'needs_slip'
         && d.status == 'pending'
-        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'slipHash', 'slipUploadedAt', 'updatedAt'])
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'slipHash', 'slipUploadedAt', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, ['booking.slip_submit'])
         && !('statusReason' in d)
         && d.slipHash is string
         && d.slipUploadedAt == request.time
@@ -94,14 +115,15 @@ service cloud.firestore {
     }
 
     // ผู้เช่ายกเลิกเอง: เฉพาะ pending / needs_slip และแผงต้องถูกปล่อยพร้อมกัน
-    function isTenantCancel() {
+    function isTenantCancel(bookingId) {
       let d = request.resource.data;
       let r = resource.data;
       return isNotAnonymous()
         && r.tenantId == request.auth.uid
         && r.status in ['pending', 'needs_slip']
         && d.status == 'cancelled'
-        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && d.diff(r).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, ['booking.cancel_self'])
         && d.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId)).data.status == 'available';
     }
@@ -112,7 +134,8 @@ service cloud.firestore {
       let stallPath = /databases/$(database)/documents/markets/main-layout/stalls/$(r.stallId);
       return (r.status == 'pending' || (r.status == 'needs_slip' && d.status == 'rejected'))
         && d.status in ['approved', 'needs_slip', 'rejected']
-        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'decidedBy', 'decidedAt', 'updatedAt'])
+        && d.diff(r).affectedKeys().hasOnly(['status', 'statusReason', 'decidedBy', 'decidedAt', 'updatedAt', 'lastAuditId'])
+        && auditNewFor(bookingId, [d.status == 'approved' ? 'booking.approve' : (d.status == 'rejected' ? 'booking.reject' : 'booking.request_slip')])
         && d.decidedBy == request.auth.uid
         && d.decidedAt == request.time
         && (d.status == 'approved'
@@ -138,13 +161,14 @@ service cloud.firestore {
         && request.resource.data.slipUploadedAt == request.time
         && request.resource.data.slipHash is string
         && request.resource.data.keys().hasOnly(['stallId', 'stallNo', 'tenantId', 'customerName', 'customerPhone',
-             'shopName', 'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status'])
+             'shopName', 'goodsType', 'amountDue', 'slipHash', 'slipUploadedAt', 'createdAt', 'status', 'lastAuditId'])
+        && auditLinked(bookingId, ['booking.create'])
         && existsAfter(/databases/$(database)/documents/bookingSlips/$(bookingId));
       // admin/owner ตัดสินได้เฉพาะ pending -> approved / needs_slip / rejected (และ needs_slip -> rejected)
       // แก้ได้แค่ฟิลด์ผลการตรวจ ห้ามแก้ยอด/ผู้เช่า/สลิป และสถานะแผงต้องเปลี่ยนตามผลในคำสั่งเดียวกัน
       allow update: if (isAdmin() && isValidDecision(bookingId))
         || isTenantResubmit(bookingId)
-        || isTenantCancel();
+        || isTenantCancel(bookingId);
       allow delete: if isAdmin();
     }
 
@@ -172,6 +196,49 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'needs_slip'
         && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'pending';
       allow delete: if isAdmin();
+    }
+
+    // ─── Audit Logs (บันทึกการทำงาน) ─────────────────────────────────────────
+    // สร้างได้อย่างเดียว แก้/ลบไม่ได้ (แม้เป็น owner) อ่านได้เฉพาะ admin/owner
+    // ผู้เช่าเขียนได้เฉพาะ action ของผู้เช่าและเฉพาะการจองของตัวเอง role ต้องตรงกับ users/{uid}
+    // หมายเหตุ: owner ที่เข้า Firebase Console ยังลบได้ (กันไม่ได้บน Spark)
+    function auditAdminActions() {
+      return ['booking.create', 'booking.slip_submit', 'booking.approve', 'booking.request_slip', 'booking.reject',
+              'booking.cancel_self', 'booking.cancel_request', 'booking.cancel_approve', 'booking.cancel_deny',
+              'booking.cancel_admin', 'booking.expire', 'refund.record', 'settings.update', 'stall.close',
+              'stall.open', 'user.role_change', 'legacy.end'];
+    }
+
+    function auditTenantActions() {
+      return ['booking.create', 'booking.slip_submit', 'booking.cancel_self', 'booking.cancel_request'];
+    }
+
+    match /auditLogs/{auditId} {
+      allow read: if isAdmin();
+      allow update, delete: if false;
+      allow create: if isNotAnonymous()
+        && request.resource.data.keys().hasOnly(['at', 'actorUid', 'actorName', 'actorRole', 'action', 'targetType',
+             'targetId', 'marketId', 'before', 'after', 'reason', 'bookingId'])
+        && request.resource.data.keys().hasAll(['at', 'actorUid', 'actorRole', 'action', 'targetType', 'targetId'])
+        && request.resource.data.at == request.time
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.targetType in ['booking', 'stall', 'settings', 'user', 'refund']
+        && request.resource.data.targetId is string
+        && (!('actorName' in request.resource.data)
+            || (request.resource.data.actorName is string && request.resource.data.actorName.size() <= 100))
+        && (!('reason' in request.resource.data)
+            || (request.resource.data.reason is string && request.resource.data.reason.size() <= 300))
+        && (!('before' in request.resource.data) || request.resource.data.before is map)
+        && (!('after' in request.resource.data) || request.resource.data.after is map)
+        && (!('bookingId' in request.resource.data) || request.resource.data.bookingId is string)
+        && (isAdmin()
+            ? (request.resource.data.actorRole == userRole()
+               && request.resource.data.action in auditAdminActions())
+            : (request.resource.data.actorRole == 'tenant'
+               && request.resource.data.action in auditTenantActions()
+               && request.resource.data.targetType == 'booking'
+               && request.resource.data.bookingId == request.resource.data.targetId
+               && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.tenantId == request.auth.uid));
     }
 
     // ─── Users ───────────────────────────────────────────────────────────────

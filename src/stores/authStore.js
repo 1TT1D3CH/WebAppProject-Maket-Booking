@@ -73,6 +73,12 @@ export const useAuthStore = defineStore('auth', {
     isOwner: (state) => state.currentUser?.role === 'owner',
     isAdmin: (state) => state.currentUser?.role === 'admin' || state.currentUser?.role === 'owner',
     isTenant: (state) => state.currentUser?.role === 'tenant',
+    // ผู้ทำรายการสำหรับ audit log (role ต้องตรงกับ users/{uid}.role ที่ rules ตรวจ)
+    auditActor: (state) => ({
+      uid: state.currentUser?.uid || null,
+      name: state.currentUser?.displayName || state.currentUser?.email || '',
+      role: state.currentUser?.role || 'tenant'
+    }),
     userName: (state) => state.currentUser?.displayName || state.currentUser?.email || 'ผู้ใช้งานทั่วไป',
     // ล็อกอินแล้วแต่ยังไม่มีเบอร์โทร (เช่น สมัครด้วย Google ครั้งแรก) ต้องขอก่อนจอง
     needsPhone: (state) =>

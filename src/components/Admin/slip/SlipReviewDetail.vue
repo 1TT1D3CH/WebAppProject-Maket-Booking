@@ -46,6 +46,8 @@
           <div v-if="booking.statusReason" class="row"><dt>เหตุผล</dt><dd>{{ booking.statusReason }}</dd></div>
         </dl>
 
+        <BookingAuditHistory :booking-id="booking.id" :refresh-key="booking.status" />
+
         <div v-if="canDecide" class="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1">
           <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">ตรวจด้วยตา (ไม่บันทึก)</div>
           <label v-for="(label, i) in checklist" :key="i" class="flex items-center gap-3 min-h-[44px] text-sm cursor-pointer">
@@ -91,6 +93,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ArrowLeft, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-vue-next'
 import SlipImageViewer from './SlipImageViewer.vue'
+import BookingAuditHistory from './BookingAuditHistory.vue'
 import { useSlipReviewStore } from '../../../stores/slipReviewStore'
 import { useMarketStore } from '../../../stores/marketStore'
 import { useAuthStore } from '../../../stores/authStore'
@@ -197,7 +200,7 @@ async function submit(decision) {
   busy.value = true
   actionError.value = ''
   try {
-    await store.decide(props.booking, decision, reason.value, authStore.currentUser?.uid)
+    await store.decide(props.booking, decision, reason.value, authStore.auditActor)
     marketStore.showNotification(
       decision === 'approved' ? `อนุมัติการจองแผง ${props.booking.stallNo} แล้ว`
         : decision === 'rejected' ? `ปฏิเสธการจองแผง ${props.booking.stallNo} แล้ว` : 'ส่งคำขอสลิปใหม่แล้ว',

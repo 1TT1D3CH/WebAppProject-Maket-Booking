@@ -17,6 +17,7 @@ import {
 import { toPublicBookedBy, PUBLIC_TEXT_MAX } from '../utils/stallSync'
 import { slipRef, buildSlipDoc } from './slipStorage'
 import { keepAlive } from '../utils/keepAlive'
+import { addAuditToBatch } from './auditLog'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
@@ -189,6 +190,15 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
       goodsType: customerInfo.goodsType
     })
 
+    const auditId = addAuditToBatch(transaction, {
+      actor: { uid: customerInfo.tenantId, name: customerInfo.name, role: 'tenant' },
+      action: 'booking.create',
+      targetType: 'booking',
+      targetId: bookingRef.id,
+      bookingId: bookingRef.id,
+      marketId: MARKET_ID,
+      after: { status: 'pending', stallNo: stall.stallNo || null }
+    })
     transaction.update(stallRef, { status: 'pending', bookedBy, updatedAt: new Date().toISOString() })
     transaction.set(bookingRef, {
       stallId,
@@ -202,7 +212,8 @@ export async function bookStallWithTransaction(stallId, customerInfo) {
       slipHash: customerInfo.slip.hash,
       slipUploadedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
-      status: 'pending'
+      status: 'pending',
+      lastAuditId: auditId
     })
     transaction.set(slipRef(bookingRef.id), buildSlipDoc({
       tenantId: customerInfo.tenantId,
@@ -294,6 +305,8 @@ export async function findBookingsWithSameSlip(slipHash, excludeId) {
   return snap.docs.filter(d => d.id !== excludeId).map(d => ({ id: d.id, ...d.data() }))
 }
 
+const DECISION_ACTION = { approved: 'booking.approve', needs_slip: 'booking.request_slip', rejected: 'booking.reject' }
+
 const DECISION_NOTICE = {
   approved: (no) => ({ title: 'อนุมัติการจองแล้ว', message: `การจองแผง ${no} ของคุณได้รับการอนุมัติแล้ว` }),
   needs_slip: (no, reason) => ({ title: 'ขอสลิปใหม่', message: `การจองแผง ${no}: กรุณาส่งสลิปใหม่ (${reason})` }),
@@ -305,9 +318,10 @@ const DECISION_NOTICE = {
  * approved -> แผง booked | rejected -> แผง available | needs_slip -> แผงยัง pending
  * ถ้าถูกตัดสินไปแล้ว (admin อีกคนกดก่อน) จะโยน error code 'already-decided' ไม่ทับ
  */
-export async function decideBooking({ bookingId, decision, reason = '', adminUid }) {
+export async function decideBooking({ bookingId, decision, reason = '', actor }) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
   if (!['approved', 'needs_slip', 'rejected'].includes(decision)) throw new Error('การตัดสินไม่ถูกต้อง')
+  if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ตรวจ กรุณาเข้าสู่ระบบใหม่')
   const cleanReason = String(reason || '').trim().slice(0, 300)
   if (decision !== 'approved' && !cleanReason) throw new Error('กรุณาระบุเหตุผล')
 
@@ -329,7 +343,18 @@ export async function decideBooking({ bookingId, decision, reason = '', adminUid
     const sSnap = await tx.get(stallRef)
     if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้ (อาจถูกลบออกจากผัง)')
 
-    const update = { status: decision, decidedBy: adminUid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    const auditId = addAuditToBatch(tx, {
+      actor,
+      action: DECISION_ACTION[decision],
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: b.status },
+      after: { status: decision },
+      reason: decision === 'approved' ? '' : cleanReason
+    })
+    const update = { status: decision, decidedBy: actor.uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId: auditId }
     if (decision !== 'approved') update.statusReason = cleanReason
     tx.update(bookingRef, update)
 
@@ -370,7 +395,7 @@ export function subscribeMyBookings(uid, onData, onError) {
  * ส่งสลิปใหม่หลังถูกขอ: อัปเดตรูป + booking กลับเป็น pending (ล้างเหตุผล) ใน transaction เดียว
  * @param {{dataUrl, mime, bytes, hash}} slip
  */
-export async function resubmitSlip({ bookingId, tenantId, slip }) {
+export async function resubmitSlip({ bookingId, tenantId, tenantName = '', slip }) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
   if (!slip?.dataUrl) throw new Error('กรุณาแนบสลิปใหม่')
   const bookingRef = doc(db, 'bookings', bookingId)
@@ -382,12 +407,23 @@ export async function resubmitSlip({ bookingId, tenantId, slip }) {
       err.code = 'bad-status'
       throw err
     }
+    const auditId = addAuditToBatch(tx, {
+      actor: { uid: tenantId, name: tenantName || snap.data().customerName, role: 'tenant' },
+      action: 'booking.slip_submit',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: 'needs_slip' },
+      after: { status: 'pending' }
+    })
     tx.update(bookingRef, {
       status: 'pending',
       statusReason: deleteField(),
       slipHash: slip.hash,
       slipUploadedAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
+      lastAuditId: auditId
     })
     tx.set(slipRef(bookingId), buildSlipDoc({
       tenantId,
@@ -416,7 +452,17 @@ export async function cancelMyBooking(bookingId) {
     const stallRef = doc(stallsCol(), b.stallId)
     const sSnap = await tx.get(stallRef)
     if (!sSnap.exists()) throw new Error('ไม่พบแผงของรายการนี้')
-    tx.update(bookingRef, { status: 'cancelled', updatedAt: serverTimestamp() })
+    const auditId = addAuditToBatch(tx, {
+      actor: { uid: b.tenantId, name: b.customerName, role: 'tenant' },
+      action: 'booking.cancel_self',
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: { status: b.status },
+      after: { status: 'cancelled' }
+    })
+    tx.update(bookingRef, { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId: auditId })
     if (sSnap.data().bookedBy?.bookingId === bookingId) {
       tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
     }

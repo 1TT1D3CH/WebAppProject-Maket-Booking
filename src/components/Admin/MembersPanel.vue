@@ -67,7 +67,8 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { collection, getDocs, updateDoc, doc } from 'firebase/firestore'
+import { collection, getDocs, writeBatch, doc } from 'firebase/firestore'
+import { addAuditToBatch } from '../../services/auditLog'
 import { db, isRealFirebaseConfigured } from '../../firebase/config'
 import { useAuthStore } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
@@ -123,7 +124,18 @@ async function setRole(m, role) {
   if (role === m.role) return
   savingUid.value = m.uid
   try {
-    await updateDoc(doc(db, 'users', m.uid), { role })
+    // เปลี่ยนสิทธิ์ + audit log ใน batch เดียวกัน (ไปพร้อมกันหรือไม่ไปเลย)
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'users', m.uid), { role })
+    addAuditToBatch(batch, {
+      actor: authStore.auditActor,
+      action: 'user.role_change',
+      targetType: 'user',
+      targetId: m.uid,
+      before: { role: m.role },
+      after: { role }
+    })
+    await batch.commit()
     m.role = role
     marketStore.showNotification(`ตั้ง ${m.displayName || m.email} เป็น ${roleLabel[role]} แล้ว`, 'success')
   } catch (err) {

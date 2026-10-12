@@ -44,6 +44,19 @@ const anon = () => testEnv.authenticatedContext('anon1', { firebase: { sign_in_p
 const guest = () => testEnv.unauthenticatedContext().firestore()
 
 const STALL = 'markets/main-layout/stalls'
+// audit log: ทุกการเปลี่ยนสถานะการจองต้องมี log ใน batch/transaction เดียวกัน (lastAuditId ชี้ไป)
+const ROLE_OF = { admin1: 'admin', owner1: 'owner' }
+const auditDoc = (uid, action, bookingId, over = {}) => ({
+  at: serverTimestamp(), actorUid: uid, actorName: uid, actorRole: ROLE_OF[uid] || 'tenant',
+  action, targetType: 'booking', targetId: bookingId, bookingId, ...over
+})
+// เขียน log เข้า batch/tx แล้วคืน id สำหรับ lastAuditId
+const addAudit = (w, db, uid, action, bookingId, over) => {
+  const ref = doc(collection(db, 'auditLogs'))
+  w.set(ref, auditDoc(uid, action, bookingId, over))
+  return ref.id
+}
+const DECISION_ACTION = { approved: 'booking.approve', rejected: 'booking.reject', needs_slip: 'booking.request_slip' }
 const bookedBy = (uid, bookingId = 'bk1') => ({ tenantId: uid, bookedAt: '2026-10-07T00:00:00Z', bookingId })
 
 describe('users (B3, B4)', () => {
@@ -263,8 +276,9 @@ describe('bookings (B1, B9)', () => {
   const bookBatch = ({ uid = 'alice', stallId = 's1', id = 'bk-new', booking = {}, slip = {}, withSlip = true, stallStatus = 'pending' } = {}) => {
     const db = tenant(uid)
     const batch = writeBatch(db)
+    const lastAuditId = addAudit(batch, db, uid, 'booking.create', id)
     batch.update(doc(db, `${STALL}/${stallId}`), { status: stallStatus, bookedBy: bookedBy(uid, id), updatedAt: 'x' })
-    batch.set(doc(db, `bookings/${id}`), newBooking({ tenantId: uid, stallId, ...booking }))
+    batch.set(doc(db, `bookings/${id}`), newBooking({ tenantId: uid, stallId, lastAuditId, ...booking }))
     if (withSlip) batch.set(doc(db, `bookingSlips/${id}`), slipDoc({ tenantId: uid, ...slip }))
     return batch.commit()
   }
@@ -335,7 +349,7 @@ describe('bookings (B1, B9)', () => {
     const db = tenant('alice')
     const batch = writeBatch(db)
     batch.update(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-x') })
-    batch.set(doc(db, 'bookings/bk-x'), newBooking({ tenantId: 'bob' }))
+    batch.set(doc(db, 'bookings/bk-x'), newBooking({ tenantId: 'bob', lastAuditId: addAudit(batch, db, 'alice', 'booking.create', 'bk-x') }))
     await assertFails(batch.commit())
     await assertFails(setDoc(doc(anon(), 'bookings/b3'), newBooking({ tenantId: 'anon1' })))
   })
@@ -365,7 +379,8 @@ describe('ตรวจสลิป: admin/owner ตัดสินการจ�
   const decide = (uid, bookingPatch, stallPatch, id = 'bk1') => {
     const db = tenant(uid)
     const batch = writeBatch(db)
-    batch.update(doc(db, `bookings/${id}`), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...bookingPatch })
+    const lastAuditId = addAudit(batch, db, uid, DECISION_ACTION[bookingPatch.status] || 'booking.approve', id)
+    batch.update(doc(db, `bookings/${id}`), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId, ...bookingPatch })
     if (stallPatch) batch.update(doc(db, `${STALL}/s1`), stallPatch)
     return batch.commit()
   }
@@ -446,9 +461,10 @@ describe('ผู้เช่าส่งสลิปใหม่ / ยกเล�
   const resubmit = (uid = 'alice', { booking = {}, withSlip = true, slip = {} } = {}) => {
     const db = tenant(uid)
     const batch = writeBatch(db)
+    const lastAuditId = addAudit(batch, db, uid, 'booking.slip_submit', 'bk1')
     batch.update(doc(db, 'bookings/bk1'), {
       status: 'pending', statusReason: deleteField(), slipHash: 'new',
-      slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...booking
+      slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId, ...booking
     })
     if (withSlip) {
       batch.set(doc(db, 'bookingSlips/bk1'), { tenantId: uid, marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp(), ...slip })
@@ -459,7 +475,8 @@ describe('ผู้เช่าส่งสลิปใหม่ / ยกเล�
   const cancel = (uid = 'alice', { releaseStall = true } = {}) => {
     const db = tenant(uid)
     const batch = writeBatch(db)
-    batch.update(doc(db, 'bookings/bk1'), { status: 'cancelled', updatedAt: serverTimestamp() })
+    const lastAuditId = addAudit(batch, db, uid, 'booking.cancel_self', 'bk1')
+    batch.update(doc(db, 'bookings/bk1'), { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId })
     if (releaseStall) batch.update(doc(db, `${STALL}/s1`), { status: 'available', bookedBy: null, updatedAt: 'x' })
     return batch.commit()
   }
@@ -533,10 +550,11 @@ describe('เส้นทางเต็มของระบบสลิป (�
   const book = async () => {
     const db = tenant('alice')
     const batch = writeBatch(db)
+    const lastAuditId = addAudit(batch, db, 'alice', 'booking.create', 'bk-flow')
     batch.update(doc(db, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-flow'), updatedAt: 'x' })
     batch.set(doc(db, 'bookings/bk-flow'), {
       tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111', goodsType: 'ชา',
-      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending'
+      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending', lastAuditId
     })
     batch.set(doc(db, 'bookingSlips/bk-flow'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
     await batch.commit()
@@ -544,7 +562,8 @@ describe('เส้นทางเต็มของระบบสลิป (�
   const adminDecide = async (uid, bookingPatch, stallPatch) => {
     const db = tenant(uid)
     const batch = writeBatch(db)
-    batch.update(doc(db, 'bookings/bk-flow'), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...bookingPatch })
+    const lastAuditId = addAudit(batch, db, uid, DECISION_ACTION[bookingPatch.status], 'bk-flow')
+    batch.update(doc(db, 'bookings/bk-flow'), { decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId, ...bookingPatch })
     if (stallPatch) batch.update(doc(db, `${STALL}/s1`), stallPatch)
     await batch.commit()
   }
@@ -554,7 +573,7 @@ describe('เส้นทางเต็มของระบบสลิป (�
     await adminDecide('admin1', { status: 'needs_slip', statusReason: 'รูปไม่ชัด' }, null)
     const db = tenant('alice')
     const batch = writeBatch(db)
-    batch.update(doc(db, 'bookings/bk-flow'), { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp() })
+    batch.update(doc(db, 'bookings/bk-flow'), { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId: addAudit(batch, db, 'alice', 'booking.slip_submit', 'bk-flow') })
     batch.set(doc(db, 'bookingSlips/bk-flow'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
     await assertSucceeds(batch.commit())
     await assertSucceeds(adminDecide('owner1', { status: 'approved' }, { status: 'booked' }))
@@ -583,25 +602,139 @@ describe('ส่งสลิปใหม่ด้วย transaction (เหม�
     // จองจริง -> admin ขอสลิปใหม่จริง (ผ่าน rules ทั้งคู่)
     const adb = tenant('alice')
     const b1 = writeBatch(adb)
+    const auditT = addAudit(b1, adb, 'alice', 'booking.create', 'bk-t')
     b1.update(doc(adb, `${STALL}/s1`), { status: 'pending', bookedBy: bookedBy('alice', 'bk-t'), updatedAt: 'x' })
     b1.set(doc(adb, 'bookings/bk-t'), {
       tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111', goodsType: 'ชา',
-      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending'
+      amountDue: 500, slipHash: 'h1', slipUploadedAt: serverTimestamp(), createdAt: serverTimestamp(), status: 'pending', lastAuditId: auditT
     })
     b1.set(doc(adb, 'bookingSlips/bk-t'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
     await assertSucceeds(b1.commit())
     const mdb = tenant('admin1')
-    await assertSucceeds(updateDoc(doc(mdb, 'bookings/bk-t'), {
-      status: 'needs_slip', statusReason: 'ยอดไม่ตรง', decidedBy: 'admin1', decidedAt: serverTimestamp(), updatedAt: serverTimestamp()
-    }))
+    const mb = writeBatch(mdb)
+    const auditM = addAudit(mb, mdb, 'admin1', 'booking.request_slip', 'bk-t')
+    mb.update(doc(mdb, 'bookings/bk-t'), {
+      status: 'needs_slip', statusReason: 'ยอดไม่ตรง', decidedBy: 'admin1', decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId: auditM
+    })
+    await assertSucceeds(mb.commit())
 
     const db = tenant('alice')
     await assertSucceeds(runTransaction(db, async (tx) => {
       const ref = doc(db, 'bookings/bk-t')
       const snap = await tx.get(ref)
       if (snap.data().status !== 'needs_slip') throw new Error('bad status')
-      tx.update(ref, { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp() })
+      tx.update(ref, { status: 'pending', statusReason: deleteField(), slipHash: 'h2', slipUploadedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId: addAudit(tx, db, 'alice', 'booking.slip_submit', 'bk-t') })
       tx.set(doc(db, 'bookingSlips/bk-t'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
     }))
+  })
+})
+
+describe('audit log (บันทึกการทำงาน)', () => {
+  const seedPending = async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, `${STALL}/s1`), { stallNo: 'A1', x: 10, y: 10, price: 500, status: 'pending', bookedBy: bookedBy('alice', 'bk1') })
+      await setDoc(doc(db, 'bookings/bk1'), {
+        tenantId: 'alice', stallId: 's1', stallNo: 'A1', customerName: 'Alice', customerPhone: '0811111111',
+        amountDue: 500, slipHash: 'h', status: 'pending', lastAuditId: 'old-audit'
+      })
+      await setDoc(doc(db, 'auditLogs/old-audit'), { at: new Date(), actorUid: 'alice', actorRole: 'tenant', action: 'booking.create', targetType: 'booking', targetId: 'bk1', bookingId: 'bk1' })
+    })
+  }
+  const approve = (uid, { audit = true, auditOver, auditId } = {}) => {
+    const db = tenant(uid)
+    const batch = writeBatch(db)
+    const id = audit ? addAudit(batch, db, uid, 'booking.approve', 'bk1', auditOver) : null
+    batch.update(doc(db, 'bookings/bk1'), {
+      status: 'approved', decidedBy: uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      ...(audit || auditId ? { lastAuditId: auditId || id } : {})
+    })
+    batch.update(doc(db, `${STALL}/s1`), { status: 'booked' })
+    return batch.commit()
+  }
+
+  test('เปลี่ยนสถานะโดยไม่มี log ไม่ผ่าน', async () => {
+    await seedPending()
+    await assertFails(approve('admin1', { audit: false }))
+  })
+
+  test('ชี้ lastAuditId เดิม (log ของการกระทำก่อนหน้า) ไม่ผ่าน', async () => {
+    await seedPending()
+    await assertFails(approve('admin1', { audit: false, auditId: 'old-audit' }))
+  })
+
+  test('log ที่ actorUid เป็นคนอื่นไม่ผ่าน', async () => {
+    await seedPending()
+    await assertFails(approve('admin1', { auditOver: { actorUid: 'owner1' } }))
+  })
+
+  test('log ที่ action ไม่ตรงกับการกระทำ (อนุมัติแต่บันทึกว่าปฏิเสธ) ไม่ผ่าน', async () => {
+    await seedPending()
+    await assertFails(approve('admin1', { auditOver: { action: 'booking.reject' } }))
+  })
+
+  test('log ที่ at ไม่ใช่ request.time ไม่ผ่าน', async () => {
+    await seedPending()
+    await assertFails(approve('admin1', { auditOver: { at: new Date('2020-01-01') } }))
+  })
+
+  test('มี log ถูกต้องผ่าน และ admin/owner อ่าน log ได้ ผู้เช่าอ่านไม่ได้', async () => {
+    await seedPending()
+    await assertSucceeds(approve('admin1'))
+    const rows = await getDocs(collection(tenant('admin1'), 'auditLogs'))
+    assert.ok(rows.size >= 2)
+    await assertSucceeds(getDocs(collection(tenant('owner1'), 'auditLogs')))
+    await assertFails(getDocs(collection(tenant('alice'), 'auditLogs')))
+    await assertFails(getDoc(doc(tenant('alice'), 'auditLogs/old-audit')))
+  })
+
+  test('ผู้เช่าเขียน log ว่าตัวเองเป็น admin ไม่ผ่าน', async () => {
+    await seedPending()
+    const db = tenant('alice')
+    await assertFails(setDoc(doc(db, 'auditLogs/x1'), auditDoc('alice', 'booking.cancel_self', 'bk1', { actorRole: 'admin' })))
+  })
+
+  test('ผู้เช่าเขียน action ของ admin (approve) ไม่ผ่าน', async () => {
+    await seedPending()
+    const db = tenant('alice')
+    await assertFails(setDoc(doc(db, 'auditLogs/x2'), auditDoc('alice', 'booking.approve', 'bk1')))
+  })
+
+  test('ผู้เช่าเขียน log ของการจองคนอื่นไม่ผ่าน', async () => {
+    await seedPending()
+    const db = tenant('bob')
+    await assertFails(setDoc(doc(db, 'auditLogs/x3'), auditDoc('bob', 'booking.cancel_self', 'bk1')))
+  })
+
+  test('admin ตั้ง actorRole เป็น owner ทั้งที่เป็น admin ไม่ผ่าน และอ้าง role system ไม่ได้', async () => {
+    await seedPending()
+    const db = tenant('admin1')
+    await assertFails(setDoc(doc(db, 'auditLogs/x4'), auditDoc('admin1', 'booking.approve', 'bk1', { actorRole: 'owner' })))
+    await assertFails(setDoc(doc(db, 'auditLogs/x5'), auditDoc('admin1', 'booking.approve', 'bk1', { actorRole: 'system' })))
+  })
+
+  test('log มีฟิลด์แปลกปลอมหรือ action นอกรายการไม่ผ่าน', async () => {
+    await seedPending()
+    const db = tenant('admin1')
+    await assertFails(setDoc(doc(db, 'auditLogs/x6'), auditDoc('admin1', 'booking.approve', 'bk1', { slipDataUrl: 'data:...' })))
+    await assertFails(setDoc(doc(db, 'auditLogs/x7'), auditDoc('admin1', 'booking.hack', 'bk1')))
+  })
+
+  test('แก้/ลบ log ไม่ได้แม้เป็น owner', async () => {
+    await seedPending()
+    await assertFails(updateDoc(doc(tenant('owner1'), 'auditLogs/old-audit'), { reason: 'x' }))
+    await assertFails(deleteDoc(doc(tenant('owner1'), 'auditLogs/old-audit')))
+    await assertFails(deleteDoc(doc(tenant('admin1'), 'auditLogs/old-audit')))
+  })
+
+  test('เปลี่ยน role ผู้ใช้พร้อม log (batch เดียว) โดย owner ผ่าน', async () => {
+    const db = tenant('owner1')
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'users/alice'), { role: 'admin' })
+    batch.set(doc(collection(db, 'auditLogs')), {
+      at: serverTimestamp(), actorUid: 'owner1', actorName: 'Owner', actorRole: 'owner', action: 'user.role_change',
+      targetType: 'user', targetId: 'alice', before: { role: 'tenant' }, after: { role: 'admin' }
+    })
+    await assertSucceeds(batch.commit())
   })
 })

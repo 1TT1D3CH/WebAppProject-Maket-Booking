@@ -74,6 +74,17 @@
           </button>
 
           <button
+            @click="marketStore.setMode('audit')"
+            class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
+            :class="marketStore.activeMode === 'audit'
+              ? 'bg-slate-700 text-white shadow-sm shadow-slate-200 dark:shadow-none'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'"
+          >
+            <History class="w-3.5 h-3.5" />
+            <span class="hidden sm:inline">บันทึกการทำงาน</span>
+          </button>
+
+          <button
             @click="marketStore.setMode('customer')"
             class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-1.5"
             :class="marketStore.activeMode === 'customer' 
@@ -284,6 +295,7 @@ import {
   Settings,
   Users,
   ReceiptText,
+  History,
   ClipboardList,
   Maximize2,
   Bell,
