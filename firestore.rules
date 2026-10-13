@@ -505,6 +505,11 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && get(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'needs_slip'
         && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'pending';
+      // ตอนอนุมัติ: admin ตั้งเวลาลบรูปอัตโนมัติ (purgeAfter) ได้อย่างเดียว พร้อม booking เป็น approved
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['purgeAfter'])
+        && request.resource.data.purgeAfter is timestamp
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'approved';
       allow delete: if isAdmin();
     }
 

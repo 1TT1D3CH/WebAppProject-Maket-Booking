@@ -97,6 +97,13 @@
       <p v-if="actionError" class="mt-2 text-xs text-rose-600 dark:text-rose-400 font-medium">{{ actionError }}</p>
     </footer>
 
+    <footer v-if="booking.status === 'approved' && slip" class="shrink-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <button type="button" class="btn w-full bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800" :disabled="busy" @click="deleteSlipNow">
+        {{ busy ? 'กำลังลบ...' : 'ลบรูปสลิปทันที' }}
+      </button>
+      <p v-if="actionError" class="mt-2 text-xs text-rose-600 dark:text-rose-400 font-medium">{{ actionError }}</p>
+    </footer>
+
     <SlipImageViewer v-if="fullscreen && slip" :src="slip.dataUrl" fullscreen @close="fullscreen = false" />
   </div>
 </template>
@@ -227,6 +234,26 @@ async function removeThis() {
   } catch (err) {
     console.error('Delete booking error:', err)
     actionError.value = err.code === 'permission-denied' ? 'ไม่มีสิทธิ์ลบ (หรือ rules ยังไม่ได้ deploy)' : (err.message || 'ลบไม่สำเร็จ')
+  } finally {
+    busy.value = false
+  }
+}
+
+// ลบรูปสลิปของรายการที่อนุมัติแล้วทันที (ไม่รอครบ 1 วัน) ยืนยัน 2 รอบกันกดผิด; รายการจอง/ใบเสร็จยังอยู่
+async function deleteSlipNow() {
+  if (busy.value) return
+  const stall = props.booking.stallNo || '-'
+  if (!window.confirm(`ลบรูปสลิปของแผง ${stall} ทันที?\nรายการจองและใบเสร็จจะยังอยู่ แต่รูปสลิปจะหายไปถาวร`)) return
+  if (!window.confirm(`ยืนยันอีกครั้ง: ลบรูปสลิปแผง ${stall} จริง ๆ ใช่ไหม?\nลบแล้วกู้คืนไม่ได้`)) return
+  busy.value = true
+  actionError.value = ''
+  try {
+    await store.deleteSlipNow(props.booking.id)
+    slip.value = null
+    marketStore.showNotification('ลบรูปสลิปแล้ว', 'success')
+  } catch (err) {
+    console.error('Delete slip error:', err)
+    actionError.value = err.code === 'permission-denied' ? 'ไม่มีสิทธิ์ลบรูปสลิป' : (err.message || 'ลบไม่สำเร็จ')
   } finally {
     busy.value = false
   }

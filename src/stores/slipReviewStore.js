@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import {
   subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip, deleteDecidedBookings,
-  decideCancellation, recordRefund, getRefundAccount, expireBookings
+  decideCancellation, recordRefund, getRefundAccount, expireBookings, purgeExpiredSlips
 } from '../services/firebaseService'
 import { useAuthStore } from './authStore'
 import { useSlotStore } from './slotStore'
 import { isHoldExpired } from '../utils/holdTimer'
 import { serverNow } from '../utils/serverClock'
-import { getSlip } from '../services/slipStorage'
+import { getSlip, deleteSlip } from '../services/slipStorage'
 
 function describeError(err) {
   if (err?.code === 'permission-denied') return 'ไม่มีสิทธิ์ดูรายการนี้ (ต้องเป็น admin หรือ owner)'
@@ -15,6 +15,8 @@ function describeError(err) {
   if (err?.code === 'unavailable') return 'เชื่อมต่อฐานข้อมูลไม่ได้ ตรวจสอบอินเทอร์เน็ต'
   return err?.message || 'โหลดรายการไม่สำเร็จ'
 }
+
+let slipSweepTimer = null
 
 export const useSlipReviewStore = defineStore('slipReview', {
   state: () => ({
@@ -64,9 +66,28 @@ export const useSlipReviewStore = defineStore('slipReview', {
         listen('cancelReq', ['cancel_requested'], { order: 'asc' }),
         listen('cancelled', ['cancelled'], { order: 'desc', max: 100 })
       ]
+      // ลบรูปสลิปที่อนุมัติแล้วเกิน 1 วัน: กวาดตอนเปิดหน้านี้ แล้วทุก 30 นาที
+      this.sweepSlips()
+      slipSweepTimer = setInterval(() => this.sweepSlips(), 30 * 60 * 1000)
+    },
+
+    /** ลบรูปสลิปของรายการที่อนุมัติแล้วทันที */
+    async deleteSlipNow(bookingId) {
+      await deleteSlip(bookingId)
+      delete this.slipCache[this.slipKey(bookingId)]
+    },
+
+    async sweepSlips() {
+      try {
+        const n = await purgeExpiredSlips()
+        if (n) this.slipCache = {}
+      } catch (err) {
+        console.warn('Purge slips notice:', err?.message)
+      }
     },
 
     stop() {
+      clearInterval(slipSweepTimer)
       this.unsubs.forEach(fn => fn())
       this.unsubs = []
       this.pending = []

@@ -27,6 +27,7 @@ import { todayBangkok, addDays } from '../utils/date'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
+export const SLIP_RETENTION_MS = 24 * 60 * 60 * 1000 // เก็บรูปสลิปที่อนุมัติแล้วไว้ 1 วัน
 
 // ผู้ทำรายการที่เป็นเจ้าของการจองเอง: role ต้องตรงกับ users/{uid}.role จริง (rules ตรวจ)
 // admin/owner ที่ลองจองเองจึงต้องส่ง role ของตัวเอง ไม่ใช่ 'tenant'
@@ -399,6 +400,10 @@ export async function decideBooking({ bookingId, decision, reason = '', actor, r
       update.holdMinutes = holdMinutes
     }
     tx.update(bookingRef, update)
+    // อนุมัติแล้ว: ตั้งเวลาลบรูปสลิปอัตโนมัติ (ตัวกวาดฝั่งแอดมิน purgeExpiredSlips เป็นคนลบ)
+    if (decision === 'approved') {
+      tx.update(slipRef(bookingId), { purgeAfter: Timestamp.fromMillis(Date.now() + SLIP_RETENTION_MS) })
+    }
 
     const now = new Date().toISOString()
     if (isSlot) {
@@ -570,6 +575,25 @@ export async function deleteDecidedBookings(bookings, actor) {
     await batch.commit()
   }
   return targets.length
+}
+
+/**
+ * (admin) ลบรูปสลิปของการจองที่อนุมัติแล้วและเกินกำหนดเก็บ (purgeAfter <= ตอนนี้)
+ * ลบเฉพาะรูปใน bookingSlips รายการจอง/ใบเสร็จ/รายงานรายได้ยังอยู่ครบ
+ * @returns {Promise<number>} จำนวนรูปที่ลบ
+ */
+export async function purgeExpiredSlips(max = 25) {
+  if (!isRealFirebaseConfigured || !db) return 0
+  const snap = await getDocs(query(
+    collection(db, 'bookingSlips'),
+    where('purgeAfter', '<=', Timestamp.now()),
+    limit(max)
+  ))
+  if (snap.empty) return 0
+  const batch = writeBatch(db)
+  snap.docs.forEach(d => batch.delete(d.ref))
+  await batch.commit()
+  return snap.size
 }
 
 // ─── จองตามวัน/รอบ (bookingLocks) ───────────────────────────────────────────
