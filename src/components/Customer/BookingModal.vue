@@ -156,7 +156,7 @@
               <div class="text-[11px] text-indigo-700 font-semibold">ยอดที่ต้องโอน</div>
               <div class="text-2xl font-bold font-mono text-indigo-900">฿{{ totalAmount }}</div>
               <div v-if="selected.length > 1" class="text-[11px] text-slate-600 font-mono">฿{{ stall.price }} × {{ selected.length }} ช่อง</div>
-              <div class="text-[11px] text-slate-600 font-mono mt-0.5">PromptPay: 081-999-8888</div>
+              <div class="text-[11px] text-slate-600 font-mono mt-0.5">PromptPay: 096-557-2213</div>
             </div>
             <label class="block text-xs font-semibold text-slate-800 mb-1.5">
               💳 แนบสลิปโอนเงินค่าเช่า (แนบทีหลังได้ภายใน {{ holdMinutes }} นาที)
