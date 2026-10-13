@@ -39,24 +39,16 @@ export function confirmCodeMatches(input, expected) {
   return a.length > 0 && a === b
 }
 
-/** ปิดเบอร์โทรบางส่วนก่อนเก็บใน audit log เช่น 0971238030 -> 097***8030 */
-export function maskPhone(phone) {
-  const d = String(phone ?? '').replace(/\D/g, '')
-  if (d.length < 7) return d ? '***' : ''
-  return `${d.slice(0, 3)}***${d.slice(-4)}`
-}
-
-/** สำเนาข้อมูลการจองสำหรับ audit log (ไม่มีรูปสลิป เลขบัญชี หรือเบอร์โทรเต็ม) */
+/**
+ * ข้อมูลสำหรับ audit log ของการลบ: เก็บแค่รหัสแผง ยอดเงิน สถานะ และเวลาที่จอง
+ * ห้ามมีชื่อ เบอร์โทร สินค้า รูปสลิป หรือข้อมูลส่วนตัวใด ๆ ของผู้เช่า (log ลบไม่ได้)
+ */
 export function snapshotForAudit(booking) {
-  const out = {
+  const created = booking.createdAt?.toDate ? booking.createdAt.toDate() : null
+  return {
+    stallCode: booking.stallNo || null,
+    amount: booking.amountDue ?? null,
     status: booking.status || 'approved',
-    stallNo: booking.stallNo || null,
-    customerName: booking.customerName || null,
-    phone: maskPhone(booking.customerPhone) || null,
-    amountDue: booking.amountDue ?? null,
-    receiptNo: booking.receiptNo || null,
-    slotCount: Array.isArray(booking.slots) ? booking.slots.length : 0
+    createdAt: created && !Number.isNaN(created.getTime()) ? created.toISOString() : null
   }
-  if (booking.refund?.status) out.refund = `${booking.refund.status} ${booking.refund.amount ?? ''}`.trim()
-  return out
 }

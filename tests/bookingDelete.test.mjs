@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  canDeleteBooking, deleteConfirmCode, confirmCodeMatches, maskPhone, snapshotForAudit
+  canDeleteBooking, deleteConfirmCode, confirmCodeMatches, snapshotForAudit
 } from '../src/utils/bookingDelete.js'
 
 test('canDeleteBooking: สถานะที่ลบได้/ไม่ได้', () => {
@@ -45,22 +45,17 @@ test('deleteConfirmCode / confirmCodeMatches', () => {
   assert.equal(confirmCodeMatches('', ''), false)
 })
 
-test('maskPhone ปิดตรงกลาง', () => {
-  assert.equal(maskPhone('0971238030'), '097***8030')
-  assert.equal(maskPhone('097-123-8030'), '097***8030')
-  assert.equal(maskPhone('123'), '***')
-  assert.equal(maskPhone(''), '')
-  assert.equal(maskPhone(null), '')
+test('snapshotForAudit เก็บแค่รหัสแผง ยอดเงิน สถานะ เวลา ไม่มีข้อมูลผู้เช่า', () => {
+  const s = snapshotForAudit({
+    status: 'approved', stallNo: 'S-01', customerName: 'สมชาย', customerPhone: '0971238030', goodsType: 'ผลไม้', amountDue: 500,
+    slots: ['a', 'b'], slipHash: 'x', dataUrl: 'data:...', receiptNo: 'R1', refund: { status: 'refunded', amount: 100 },
+    createdAt: { toDate: () => new Date('2026-10-13T01:00:00Z') }
+  })
+  assert.deepEqual(s, { stallCode: 'S-01', amount: 500, status: 'approved', createdAt: '2026-10-13T01:00:00.000Z' })
+  const text = JSON.stringify(s)
+  for (const leak of ['สมชาย', '0971238030', 'ผลไม้', 'data:', 'R1']) assert.equal(text.includes(leak), false, leak)
 })
 
-test('snapshotForAudit ไม่มีเบอร์เต็ม รูปสลิป หรือเลขบัญชี', () => {
-  const s = snapshotForAudit({
-    status: 'approved', stallNo: 'S-01', customerName: 'A', customerPhone: '0971238030', amountDue: 500,
-    slots: ['a', 'b'], slipHash: 'x', dataUrl: 'data:...', refund: { status: 'refunded', amount: 100 }
-  })
-  assert.equal(s.phone, '097***8030')
-  assert.equal(s.slotCount, 2)
-  assert.equal(s.refund, 'refunded 100')
-  assert.equal(JSON.stringify(s).includes('0971238030'), false)
-  assert.equal('dataUrl' in s, false)
+test('snapshotForAudit ทนข้อมูลไม่ครบ', () => {
+  assert.deepEqual(snapshotForAudit({}), { stallCode: null, amount: null, status: 'approved', createdAt: null })
 })

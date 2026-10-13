@@ -422,6 +422,7 @@ export async function decideBooking({ bookingId, decision, reason = '', actor, r
     const stallNo = b.stallNo || sSnap.data().stallNo || ''
     const notice = DECISION_NOTICE[decision](stallNo, cleanReason)
     tx.set(doc(collection(db, 'notifications')), {
+      bookingId,
       tenantId: b.tenantId,
       stallId: b.stallId,
       stallNo,
@@ -612,6 +613,8 @@ export async function deleteBookingPermanently({ bookingId, reason, confirmStall
   if (cleanReason.length < DELETE_REASON_MIN) throw new Error('กรุณาระบุเหตุผลการลบ')
 
   const bookingRef = doc(db, 'bookings', bookingId)
+  // แจ้งเตือนที่ผูกกับการจองนี้ (เฉพาะที่มี bookingId) ค้นก่อน เพราะ transaction ค้นหาไม่ได้
+  const noticeSnap = await getDocs(query(collection(db, 'notifications'), where('bookingId', '==', bookingId)))
   let stallNo = ''
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(bookingRef)
@@ -657,6 +660,7 @@ export async function deleteBookingPermanently({ bookingId, reason, confirmStall
     tx.delete(slipRef(bookingId))
     tx.delete(doc(db, 'refundAccounts', bookingId))
     tx.delete(doc(db, 'refundSlips', bookingId))
+    noticeSnap.docs.forEach(d => tx.delete(d.ref))
 
     for (const ls of lockSnaps) if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
     if (sSnap?.exists() && sSnap.data().bookedBy?.bookingId === bookingId) {
@@ -808,8 +812,9 @@ export async function countFutureLocksOfRound(roundId, fromDate) {
 
 // ─── ส่วน 3: กันแผงรอสลิป / หมดเวลา ──────────────────────────────────────────
 
-const noticeTo = (tx, b, { title, message, type = 'BOOKING' }) => {
+const noticeTo = (tx, b, { bookingId, title, message, type = 'BOOKING' }) => {
   tx.set(doc(collection(db, 'notifications')), {
+    ...(bookingId ? { bookingId } : {}),
     tenantId: b.tenantId,
     stallId: b.stallId,
     stallNo: b.stallNo || '',
@@ -914,7 +919,7 @@ export async function expireBookings(bookings, actor, offsetMs = 0) {
           if (ls.exists() && ls.data().bookingId === target.id) tx.delete(ls.ref)
         }
         if (b.tenantId !== actor.uid) {
-          noticeTo(tx, b, { title: 'การจองหมดเวลา', message: `การจองแผง ${b.stallNo || ''} หมดเวลาชำระเงินแล้ว` })
+          noticeTo(tx, b, { bookingId: target.id, title: 'การจองหมดเวลา', message: `การจองแผง ${b.stallNo || ''} หมดเวลาชำระเงินแล้ว` })
         }
       })
       done++
@@ -1034,7 +1039,7 @@ export async function decideCancellation({ bookingId, mode, reason = '', refundA
         before: { status: 'cancel_requested' }, after: { status: 'approved' }, reason: cleanReason
       })
       tx.update(bookingRef, { ...common, status: 'approved', statusReason: cleanReason, cancelRequest: deleteField(), lastAuditId: auditId })
-      noticeTo(tx, b, { title: 'ไม่อนุมัติการยกเลิก', message: `คำขอยกเลิกการจองแผง ${b.stallNo || ''} ไม่ได้รับอนุมัติ (${cleanReason})`, type: 'CANCEL_REVIEW' })
+      noticeTo(tx, b, { bookingId: bookingId, title: 'ไม่อนุมัติการยกเลิก', message: `คำขอยกเลิกการจองแผง ${b.stallNo || ''} ไม่ได้รับอนุมัติ (${cleanReason})`, type: 'CANCEL_REVIEW' })
       return
     }
 
@@ -1076,6 +1081,7 @@ export async function decideCancellation({ bookingId, mode, reason = '', refundA
       tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
     }
     noticeTo(tx, b, {
+      bookingId,
       title: 'อนุมัติการยกเลิก',
       message: refund.status === 'pending'
         ? `การจองแผง ${b.stallNo || ''} ถูกยกเลิกแล้ว จะได้รับเงินคืน ${formatBaht(amount)}`
@@ -1126,7 +1132,7 @@ export async function recordRefund({ bookingId, amount, method, date, note = '',
     }
     // ข้อมูลบัญชีรับเงินคืนไม่จำเป็นอีกแล้ว ลบทิ้ง
     tx.delete(doc(db, 'refundAccounts', bookingId))
-    noticeTo(tx, b, { title: 'คืนเงินแล้ว', message: `คืนเงินการจองแผง ${b.stallNo || ''} แล้ว ${formatBaht(amt)}`, type: 'REFUND' })
+    noticeTo(tx, b, { bookingId: bookingId, title: 'คืนเงินแล้ว', message: `คืนเงินการจองแผง ${b.stallNo || ''} แล้ว ${formatBaht(amt)}`, type: 'REFUND' })
   })
 }
 

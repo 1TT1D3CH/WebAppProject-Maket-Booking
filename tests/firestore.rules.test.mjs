@@ -845,6 +845,26 @@ describe('ลบรายการจองที่ตัดสินแล้�
     }
   })
 
+  test('หลังลบ booking และสลิปไม่เหลือ และลบแจ้งเตือนที่ผูกการจองใน batch เดียวกันได้', async () => {
+    await seed('approved')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'notifications/n-bk1'), { tenantId: 'alice', bookingId: 'bk1', title: 'x', isRead: false })
+    })
+    const db = tenant('admin1')
+    const batch = writeBatch(db)
+    batch.set(doc(db, 'auditLogs/delete_bk1'), auditDoc('admin1', 'booking.delete', 'bk1', { actorRole: 'admin' }))
+    batch.delete(doc(db, 'bookings/bk1'))
+    batch.delete(doc(db, 'bookingSlips/bk1'))
+    batch.delete(doc(db, 'notifications/n-bk1'))
+    await assertSucceeds(batch.commit())
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const c = ctx.firestore()
+      assert.equal((await getDoc(doc(c, 'bookings/bk1'))).exists(), false)
+      assert.equal((await getDoc(doc(c, 'bookingSlips/bk1'))).exists(), false)
+      assert.equal((await getDoc(doc(c, 'notifications/n-bk1'))).exists(), false)
+    })
+  })
+
   test('ลบ bookingSlips เดี่ยว ๆ ของ admin ยังทำได้ (ลบสลิปอัตโนมัติ/ทันที)', async () => {
     await seed('approved')
     await assertSucceeds(deleteDoc(doc(tenant('admin1'), 'bookingSlips/bk1')))
