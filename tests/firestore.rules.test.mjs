@@ -750,26 +750,39 @@ describe('audit log (บันทึกการทำงาน)', () => {
   })
 })
 
-describe('ลบรายการจองที่ตัดสินแล้ว', () => {
-  const seed = async (status) => {
+describe('ลบรายการจองที่ตัดสินแล้ว (ลบถาวร)', () => {
+  const LOCK = 'bookingLocks/s1_2026-10-17_all'
+  const seed = async (status, extra = {}, { stall = 'own' } = {}) => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore()
-      await setDoc(doc(db, 'bookings/bk1'), { tenantId: 'alice', stallId: 's1', stallNo: 'A1', amountDue: 500, status })
+      await setDoc(doc(db, 'bookings/bk1'), { tenantId: 'alice', stallId: 's1', stallNo: 'A1', amountDue: 500, status, ...extra })
       await setDoc(doc(db, 'bookingSlips/bk1'), { tenantId: 'alice', marketId: 'main-layout', dataUrl: 'data:image/webp;base64,UklGRg==', mime: 'image/webp', bytes: 10 })
+      await setDoc(doc(db, `${STALL}/s1`), {
+        stallNo: 'A1', x: 10, y: 10, price: 500,
+        status: stall === 'own' ? 'booked' : 'booked',
+        bookedBy: bookedBy('alice', stall === 'own' ? 'bk1' : 'other-booking')
+      })
     })
   }
-  const remove = (uid) => {
+  // วนหลายสถานะในเทสต์เดียว: log ลบสร้างซ้ำไม่ได้ ต้องเคลียร์ก่อนรอบถัดไป
+  const clearDeleteAudit = () => testEnv.withSecurityRulesDisabled(async (ctx) => { await deleteDoc(doc(ctx.firestore(), 'auditLogs/delete_bk1')) })
+  // opts.audit: false = ไม่เขียน log; opts.auditUid: ผู้กระทำใน log; opts.releaseStall: ปล่อยแผงใน batch เดียวกัน
+  const remove = (uid, { audit = true, auditUid = uid, releaseStall = false, withSlip = true } = {}) => {
     const db = tenant(uid)
     const batch = writeBatch(db)
-    addAudit(batch, db, uid, 'booking.delete', 'bk1')
+    if (audit) batch.set(doc(db, 'auditLogs/delete_bk1'), auditDoc(auditUid, 'booking.delete', 'bk1', { actorRole: ROLE_OF[auditUid] || 'tenant' }))
     batch.delete(doc(db, 'bookings/bk1'))
-    batch.delete(doc(db, 'bookingSlips/bk1'))
+    if (withSlip) batch.delete(doc(db, 'bookingSlips/bk1'))
+    if (releaseStall) batch.update(doc(db, `${STALL}/s1`), { status: 'available', bookedBy: null, updatedAt: 'x' })
     return batch.commit()
   }
 
-  test('admin ลบรายการที่ปฏิเสธ/ยกเลิกแล้ว (พร้อมสลิปและ log) ได้', async () => {
-    await seed('rejected')
-    await assertSucceeds(remove('admin1'))
+  test('admin ลบรายการที่ปฏิเสธ/ยกเลิก/อนุมัติ/หมดเวลา (พร้อมสลิปและ log) ได้', async () => {
+    for (const status of ['rejected', 'cancelled', 'approved', 'expired']) {
+      await clearDeleteAudit()
+      await seed(status)
+      await assertSucceeds(remove('admin1'))
+    }
   })
 
   test('owner ลบรายการที่ยกเลิกแล้วได้', async () => {
@@ -777,19 +790,81 @@ describe('ลบรายการจองที่ตัดสินแล้�
     await assertSucceeds(remove('owner1'))
   })
 
-  test('ลบรายการที่อนุมัติ/รอตรวจ ไม่ได้', async () => {
+  test('ลบพร้อมปล่อยแผงที่ยังเป็นของการจองนี้ ผ่าน', async () => {
     await seed('approved')
-    await assertFails(remove('admin1'))
+    await assertSucceeds(remove('admin1', { releaseStall: true }))
   })
 
-  test('ลบรายการที่รอตรวจไม่ได้', async () => {
-    await seed('pending')
-    await assertFails(remove('admin1'))
+  test('ลบโดยไม่มี audit log ไม่ผ่าน', async () => {
+    await seed('approved')
+    await assertFails(remove('admin1', { audit: false }))
   })
 
-  test('ผู้เช่าลบไม่ได้', async () => {
-    await seed('rejected')
-    await assertFails(remove('alice'))
+  test('audit log ที่ actorUid เป็นคนอื่นไม่ผ่าน', async () => {
+    await seed('approved')
+    await assertFails(remove('admin1', { auditUid: 'owner1' }))
+  })
+
+  test('audit log ผิด action ไม่ผ่าน', async () => {
+    await seed('approved')
+    const db = tenant('admin1')
+    const batch = writeBatch(db)
+    batch.set(doc(db, 'auditLogs/delete_bk1'), auditDoc('admin1', 'booking.reject', 'bk1'))
+    batch.delete(doc(db, 'bookings/bk1'))
+    await assertFails(batch.commit())
+  })
+
+  test('ลบรายการที่รอดำเนินการ (pending / needs_slip / awaiting_slip / cancel_requested) ไม่ผ่าน', async () => {
+    for (const status of ['pending', 'needs_slip', 'awaiting_slip', 'cancel_requested']) {
+      await clearDeleteAudit()
+      await seed(status)
+      await assertFails(remove('admin1'))
+    }
+  })
+
+  test('ยกเลิกแล้วแต่ยังรอคืนเงิน (refund pending) ลบไม่ผ่าน; คืนแล้วผ่าน', async () => {
+    await seed('cancelled', { refund: { status: 'pending', amount: 100 } })
+    await assertFails(remove('admin1'))
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'bookings/bk1'), { tenantId: 'alice', stallId: 's1', stallNo: 'A1', amountDue: 500, status: 'cancelled', refund: { status: 'refunded', amount: 100 } })
+    })
+    await assertSucceeds(remove('admin1'))
+  })
+
+  test('มีเลขใบเสร็จ: admin ลบไม่ผ่าน owner ผ่าน', async () => {
+    await seed('approved', { receiptNo: 'R2569-0001' })
+    await assertFails(remove('admin1'))
+    await assertSucceeds(remove('owner1'))
+  })
+
+  test('ผู้เช่าลบไม่ได้ทุกสถานะ (แม้เขียน log เอง)', async () => {
+    for (const status of ['rejected', 'approved', 'cancelled']) {
+      await clearDeleteAudit()
+      await seed(status)
+      await assertFails(remove('alice'))
+    }
+  })
+
+  test('ลบ bookingSlips เดี่ยว ๆ ของ admin ยังทำได้ (ลบสลิปอัตโนมัติ/ทันที)', async () => {
+    await seed('approved')
+    await assertSucceeds(deleteDoc(doc(tenant('admin1'), 'bookingSlips/bk1')))
+  })
+
+  test('ลบการจอง A ที่แผงเป็นของการจอง B: ผ่าน และแผงของ B ยังอยู่ (การไม่ปล่อยแผงของคนอื่นเช็กที่ service)', async () => {
+    // rules ไม่ผูกการปล่อยแผงกับ bookedBy (admin แก้เอกสารแผงได้อยู่แล้วตอนยกเลิก) การกันอยู่ที่ deleteBookingPermanently
+    await seed('approved', {}, { stall: 'other' })
+    await assertSucceeds(remove('admin1'))
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await getDoc(doc(ctx.firestore(), `${STALL}/s1`))
+      assert.equal(snap.data().bookedBy.bookingId, 'other-booking') // ลบการจอง A แล้วแผงยังเป็นของ B
+    })
+  })
+
+  test('แก้/ลบ audit log ของการลบไม่ได้แม้เป็น owner', async () => {
+    await seed('approved')
+    await assertSucceeds(remove('owner1'))
+    await assertFails(updateDoc(doc(tenant('owner1'), 'auditLogs/delete_bk1'), { reason: 'x' }))
+    await assertFails(deleteDoc(doc(tenant('owner1'), 'auditLogs/delete_bk1')))
   })
 })
 
