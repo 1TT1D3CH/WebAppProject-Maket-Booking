@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   subscribeBookingsByStatus, decideBooking, findBookingsWithSameSlip, deleteDecidedBookings,
-  decideCancellation, recordRefund, getRefundAccount, expireBookings, purgeExpiredSlips
+  decideCancellation, recordRefund, getRefundAccount, expireBookings, purgeExpiredSlips, deleteBookingPermanently
 } from '../services/firebaseService'
 import { useAuthStore } from './authStore'
 import { useSlotStore } from './slotStore'
@@ -157,6 +157,13 @@ export const useSlipReviewStore = defineStore('slipReview', {
     },
 
     loadRefundAccount: (bookingId) => getRefundAccount(bookingId),
+
+    /** ลบการจองถาวร (ยืนยัน 2 ขั้นจากหน้าจอแล้ว) */
+    async deleteBooking(booking, { reason, confirmStallCode }, actor) {
+      const res = await deleteBookingPermanently({ bookingId: booking.id, reason, confirmStallCode, actor })
+      delete this.slipCache[this.slipKey(booking.id)]
+      return res
+    },
 
     /** ลบรายการที่ปฏิเสธ/ยกเลิกแล้ว คืนจำนวนที่ลบ */
     async removeDecided(bookings, actor) {

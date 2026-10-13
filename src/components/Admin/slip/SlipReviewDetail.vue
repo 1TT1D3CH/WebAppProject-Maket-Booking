@@ -53,6 +53,15 @@
 
         <BookingAuditHistory :booking-id="booking.id" :refresh-key="booking.status + (booking.refund?.status || '')" />
 
+        <!-- โซนอันตราย: ลบการจองถาวร (ยืนยัน 2 ขั้น) -->
+        <div v-if="deleteCheck.ok || deleteCheck.ownerOnly" class="rounded-2xl border border-rose-200 dark:border-rose-900 p-3 space-y-2">
+          <div class="text-xs font-semibold text-rose-700 dark:text-rose-300">โซนอันตราย</div>
+          <button v-if="deleteCheck.ok" type="button" class="btn w-full bg-transparent text-rose-700 dark:text-rose-300 border-2 border-rose-300 dark:border-rose-700" @click="deleteOpen = true">
+            <Trash2 class="w-4 h-4" /> ลบการจองนี้ถาวร
+          </button>
+          <p v-else class="text-xs text-slate-500 dark:text-slate-400">{{ deleteCheck.reasonText }}</p>
+        </div>
+
         <div v-if="canDecide" class="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1">
           <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">ตรวจด้วยตา (ไม่บันทึก)</div>
           <label v-for="(label, i) in checklist" :key="i" class="flex items-center gap-3 min-h-[44px] text-sm cursor-pointer">
@@ -104,16 +113,19 @@
       <p v-if="actionError" class="mt-2 text-xs text-rose-600 dark:text-rose-400 font-medium">{{ actionError }}</p>
     </footer>
 
+    <DeleteBookingDialog v-if="deleteCheck.ok" :open="deleteOpen" :booking="booking" @close="deleteOpen = false" @deleted="onDeleted" />
+
     <SlipImageViewer v-if="fullscreen && slip" :src="slip.dataUrl" fullscreen @close="fullscreen = false" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { ArrowLeft, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-vue-next'
+import { ArrowLeft, ChevronLeft, ChevronRight, AlertTriangle, Trash2 } from 'lucide-vue-next'
 import SlipImageViewer from './SlipImageViewer.vue'
 import BookingAuditHistory from './BookingAuditHistory.vue'
 import AdminCancelPanel from './AdminCancelPanel.vue'
+import DeleteBookingDialog from './DeleteBookingDialog.vue'
 import { useSlipReviewStore } from '../../../stores/slipReviewStore'
 import { useMarketStore } from '../../../stores/marketStore'
 import { useAuthStore } from '../../../stores/authStore'
@@ -122,6 +134,7 @@ import { formatThaiDateTime } from '../../../utils/date'
 import { useSlotStore } from '../../../stores/slotStore'
 import { formatSlotsSummary } from '../../../utils/marketCalendar'
 import { isShortcutBlocked } from '../../../utils/keyboard'
+import { canDeleteBooking } from '../../../utils/bookingDelete'
 
 const props = defineProps({
   booking: { type: Object, required: true },
@@ -144,6 +157,7 @@ const slipLoading = ref(false)
 const slipError = ref('')
 const duplicates = ref([])
 const fullscreen = ref(false)
+const deleteOpen = ref(false)
 const reasonMode = ref('')
 const reason = ref('')
 const busy = ref(false)
@@ -160,6 +174,11 @@ const STATUS_LABEL = {
   awaiting_slip: 'กันแผงรอผู้เช่าส่งสลิป', cancel_requested: 'ผู้เช่าขอยกเลิก', cancelled: 'ยกเลิกแล้ว', expired: 'หมดเวลา'
 }
 const statusLabel = computed(() => STATUS_LABEL[props.booking.status] || props.booking.status)
+const deleteCheck = computed(() => canDeleteBooking(props.booking, authStore.userRole))
+function onDeleted() {
+  deleteOpen.value = false
+  emit('decided') // ให้หน้ารายการเลือกรายการถัดไป หรือกลับหน้าว่าง
+}
 const canDecide = computed(() => props.booking.status === 'pending' || props.booking.status === 'needs_slip')
 // ยกเลิก/คืนเงิน/ใบเสร็จ: การจองที่อนุมัติแล้ว ขอยกเลิก หรือยกเลิกแล้วที่มียอดคืน
 const showCancelPanel = computed(() => ['approved', 'cancel_requested'].includes(props.booking.status) || (props.booking.status === 'cancelled' && !!props.booking.refund))
@@ -291,7 +310,7 @@ async function submit(decision) {
 
 // คีย์ลัดบนคอม: A อนุมัติ, R ขอสลิปใหม่, J/K ถัดไป/ก่อนหน้า (ไม่ทำงานตอนพิมพ์ในช่องข้อความ)
 function onKey(e) {
-  if (!isDesktop.value || isShortcutBlocked(e) || fullscreen.value) return
+  if (!isDesktop.value || isShortcutBlocked(e) || fullscreen.value || deleteOpen.value) return
   const k = e.key.toLowerCase()
   if (k === 'j' && props.hasNext) emit('next')
   else if (k === 'k' && props.hasPrev) emit('prev')

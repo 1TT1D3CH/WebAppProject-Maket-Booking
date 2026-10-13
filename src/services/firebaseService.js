@@ -24,6 +24,7 @@ import { isHoldExpired } from '../utils/holdTimer'
 import { suggestRefund } from '../utils/refundPolicy'
 import { formatReceiptNo, thaiYearOf, formatBaht } from '../utils/receipt'
 import { todayBangkok, addDays } from '../utils/date'
+import { canDeleteBooking, confirmCodeMatches, deleteConfirmCode, snapshotForAudit, DELETE_REASON_MIN, DELETE_REASON_MAX } from '../utils/bookingDelete'
 
 const MARKET_ID = 'main-layout'
 const BATCH_LIMIT = 450 // เพดานจริงของ Firestore คือ 500 การเขียนต่อ batch
@@ -555,7 +556,8 @@ export async function cancelMyBooking(bookingId) {
  */
 export async function deleteDecidedBookings(bookings, actor) {
   if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
-  const targets = bookings.filter(b => ['rejected', 'cancelled'].includes(b.status))
+  // กรองตามกติกาเดียวกับ rules (ยอดรอคืนเงิน / ใบเสร็จ) ไม่งั้นทั้ง batch จะล้ม
+  const targets = bookings.filter(b => ['rejected', 'cancelled'].includes(b.status) && canDeleteBooking(b, actor?.role).ok)
   const CHUNK = 100 // 1 รายการ = 3 การเขียน (booking, สลิป, log)
   for (let i = 0; i < targets.length; i += CHUNK) {
     const batch = writeBatch(db)
@@ -563,6 +565,7 @@ export async function deleteDecidedBookings(bookings, actor) {
       addAuditToBatch(batch, {
         actor,
         action: 'booking.delete',
+        auditId: `delete_${b.id}`,
         targetType: 'booking',
         targetId: b.id,
         bookingId: b.id,
@@ -594,6 +597,73 @@ export async function purgeExpiredSlips(max = 25) {
   snap.docs.forEach(d => batch.delete(d.ref))
   await batch.commit()
   return snap.size
+}
+
+/**
+ * (admin/owner) ลบการจองถาวร: booking + รูปสลิป + ข้อมูลคืนเงิน + ปล่อยแผง/lock + audit log ใน transaction เดียว
+ * ปล่อยแผง/lock เฉพาะที่ยังชี้มาที่การจองนี้ (แผงเดียวกันอาจมีการจองอื่นอยู่) ไม่แจ้งผู้เช่า
+ * audit log ใช้ id ตายตัว auditLogs/delete_{bookingId} เพื่อให้ rules ตรวจได้ว่ามี log ไปพร้อมการลบ
+ * @returns {Promise<{ stallNo: string }>}
+ */
+export async function deleteBookingPermanently({ bookingId, reason, confirmStallCode, actor }) {
+  if (!isRealFirebaseConfigured || !db) throw new Error('ยังไม่ได้ตั้งค่า Firebase')
+  if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ทำรายการ กรุณาเข้าสู่ระบบใหม่')
+  const cleanReason = String(reason || '').trim().slice(0, DELETE_REASON_MAX)
+  if (cleanReason.length < DELETE_REASON_MIN) throw new Error('กรุณาระบุเหตุผลการลบ')
+
+  const bookingRef = doc(db, 'bookings', bookingId)
+  let stallNo = ''
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(bookingRef)
+    if (!snap.exists()) {
+      const err = new Error('ไม่พบรายการจองนี้ (อาจถูกลบไปแล้ว)')
+      err.code = 'not-found'
+      throw err
+    }
+    const b = { id: bookingId, ...snap.data() }
+    // ตรวจซ้ำกับข้อมูลล่าสุดในฐานข้อมูล (สถานะอาจเปลี่ยนระหว่างที่เปิดหน้าต่างยืนยัน)
+    const check = canDeleteBooking(b, actor.role)
+    if (!check.ok) {
+      const err = new Error(`ลบไม่ได้: ${check.reasonText}`)
+      err.code = 'cannot-delete'
+      throw err
+    }
+    if (!confirmCodeMatches(confirmStallCode, deleteConfirmCode(b))) {
+      const err = new Error('รหัสแผงที่พิมพ์ยืนยันไม่ตรง')
+      err.code = 'confirm-mismatch'
+      throw err
+    }
+    stallNo = b.stallNo || ''
+
+    // อ่านทั้งหมดก่อนเขียน
+    const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+    const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+    const stallRef = b.stallId ? doc(stallsCol(), b.stallId) : null
+    const sSnap = !isSlot && stallRef ? await tx.get(stallRef) : null
+
+    addAuditToBatch(tx, {
+      actor,
+      action: 'booking.delete',
+      auditId: `delete_${bookingId}`,
+      targetType: 'booking',
+      targetId: bookingId,
+      bookingId,
+      marketId: MARKET_ID,
+      before: snapshotForAudit(b),
+      after: { deleted: true },
+      reason: cleanReason
+    })
+    tx.delete(bookingRef)
+    tx.delete(slipRef(bookingId))
+    tx.delete(doc(db, 'refundAccounts', bookingId))
+    tx.delete(doc(db, 'refundSlips', bookingId))
+
+    for (const ls of lockSnaps) if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
+    if (sSnap?.exists() && sSnap.data().bookedBy?.bookingId === bookingId) {
+      tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+    }
+  })
+  return { stallNo }
 }
 
 // ─── จองตามวัน/รอบ (bookingLocks) ───────────────────────────────────────────

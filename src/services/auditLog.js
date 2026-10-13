@@ -13,9 +13,10 @@ const REASON_MAX = 300
  * @param batchOrTx writeBatch(db) หรือ transaction (มี .set(ref, data))
  * @param {{uid, name, role}} actor
  */
-export function addAuditToBatch(batchOrTx, { actor, action, targetType, targetId, before, after, reason, bookingId, marketId }) {
+export function addAuditToBatch(batchOrTx, { actor, action, targetType, targetId, before, after, reason, bookingId, marketId, auditId: fixedId }) {
   if (!actor?.uid) throw new Error('ไม่พบข้อมูลผู้ทำรายการ กรุณาเข้าสู่ระบบใหม่')
-  const ref = doc(collection(db, 'auditLogs'))
+  // auditId กำหนดเองได้เฉพาะกรณีที่ rules ต้องรู้ id ล่วงหน้า (เช่น delete_{bookingId} ตอนลบการจอง)
+  const ref = fixedId ? doc(db, 'auditLogs', fixedId) : doc(collection(db, 'auditLogs'))
   const data = {
     at: serverTimestamp(),
     actorUid: actor.uid,

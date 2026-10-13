@@ -76,6 +76,17 @@ service cloud.firestore {
         && (!('lastAuditId' in resource.data) || request.resource.data.lastAuditId != resource.data.lastAuditId);
     }
 
+    // ลบการจอง: log id ตายตัว delete_{bookingId} เพราะ delete ส่ง lastAuditId ไม่ได้
+    function auditDeleteOk(bookingId) {
+      let p = /databases/$(database)/documents/auditLogs/$('delete_' + bookingId);
+      return existsAfter(p)
+        && getAfter(p).data.action == 'booking.delete'
+        && getAfter(p).data.targetType == 'booking'
+        && getAfter(p).data.targetId == bookingId
+        && getAfter(p).data.actorUid == request.auth.uid
+        && getAfter(p).data.at == request.time;
+    }
+
     // ─── หมดเวลากันแผง (ไม่มี server: rules เป็นตัวตัดสินด้วย request.time) ────────────
     // การจองที่ยังไม่แนบสลิป (awaiting_slip) หรือถูกขอสลิปใหม่ (needs_slip แบบรายวัน/รอบ) กันแผงได้ holdMinutes นาที
     // เกินเวลาแล้วถือว่าแผงว่าง: คนอื่นจองทับได้ และเจ้าของส่งสลิปไม่ได้อีก
@@ -424,8 +435,14 @@ service cloud.firestore {
         || isAdminCancelDecision(bookingId)
         || isRefundRecord(bookingId)
         || isReceiptIssue(bookingId);
-      // ลบได้เฉพาะรายการที่ปฏิเสธ/ยกเลิกแล้ว (แผงถูกปล่อยไปแล้ว) ไม่ลบการจองที่อนุมัติ เพราะแผงยังเป็นของผู้เช่า
-      allow delete: if isAdmin() && resource.data.status in ['rejected', 'cancelled'];
+      // ลบถาวร: admin/owner เท่านั้น เฉพาะสถานะที่ตัดสินจบแล้ว (การจองเก่าที่ไม่มี status นับเป็น approved)
+      // ห้ามลบเมื่อมียอดรอคืนเงิน; ออกเลขใบเสร็จแล้วลบได้เฉพาะ owner; ต้องมี audit log
+      // auditLogs/delete_{bookingId} (action booking.delete) เขียนในคำสั่งเดียวกัน
+      allow delete: if isAdmin()
+        && (!('status' in resource.data) || resource.data.status in ['approved', 'rejected', 'cancelled', 'expired'])
+        && !(resource.data.get('refund', {}).get('status', '') == 'pending')
+        && (!('receiptNo' in resource.data) || isOwner())
+        && auditDeleteOk(bookingId);
     }
 
     // ─── Booking Locks (กันจองซ้ำรายวัน/รอบ) ─────────────────────────────────

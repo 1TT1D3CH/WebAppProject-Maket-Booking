@@ -17,7 +17,7 @@ export const AUDIT_ACTIONS = {
   'stall.open': 'เปิดแผง',
   'user.role_change': 'เปลี่ยนสิทธิ์ผู้ใช้',
   'legacy.end': 'สิ้นสุดการจองแบบเดิม',
-  'booking.delete': 'ลบรายการจองที่ตัดสินแล้ว',
+  'booking.delete': 'ลบการจองถาวร',
   'booking.cancel_withdraw': 'ผู้เช่าถอนคำขอยกเลิก',
   'booking.receipt_issue': 'ออกเลขใบเสร็จ',
   'report.export': 'ส่งออกรายงานรายได้'
