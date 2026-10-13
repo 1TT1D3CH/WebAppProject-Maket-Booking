@@ -731,11 +731,27 @@ describe('audit log (บันทึกการทำงาน)', () => {
     await assertFails(setDoc(doc(db, 'auditLogs/x7'), auditDoc('admin1', 'booking.hack', 'bk1')))
   })
 
-  test('แก้/ลบ log ไม่ได้แม้เป็น owner', async () => {
+  test('แก้ log ไม่ได้แม้เป็น owner; ลบได้เฉพาะ owner (admin/ผู้เช่าลบไม่ได้)', async () => {
     await seedPending()
     await assertFails(updateDoc(doc(tenant('owner1'), 'auditLogs/old-audit'), { reason: 'x' }))
-    await assertFails(deleteDoc(doc(tenant('owner1'), 'auditLogs/old-audit')))
     await assertFails(deleteDoc(doc(tenant('admin1'), 'auditLogs/old-audit')))
+    await assertFails(deleteDoc(doc(tenant('alice'), 'auditLogs/old-audit')))
+    await assertSucceeds(deleteDoc(doc(tenant('owner1'), 'auditLogs/old-audit')))
+  })
+
+  test('owner ลบ log พร้อมเขียน log สรุป auditlog.purge ใน batch เดียวได้', async () => {
+    await seedPending()
+    const own = tenant('owner1')
+    const batch = writeBatch(own)
+    batch.set(doc(collection(own, 'auditLogs')), {
+      at: serverTimestamp(), actorUid: 'owner1', actorName: 'Owner', actorRole: 'owner', action: 'auditlog.purge',
+      targetType: 'settings', targetId: 'auditLogs', after: { deletedCount: 1 }
+    })
+    batch.delete(doc(own, 'auditLogs/old-audit'))
+    await assertSucceeds(batch.commit())
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      assert.equal((await getDoc(doc(ctx.firestore(), 'auditLogs/old-audit'))).exists(), false)
+    })
   })
 
   test('เปลี่ยน role ผู้ใช้พร้อม log (batch เดียว) โดย owner ผ่าน', async () => {
@@ -880,11 +896,11 @@ describe('ลบรายการจองที่ตัดสินแล้�
     })
   })
 
-  test('แก้/ลบ audit log ของการลบไม่ได้แม้เป็น owner', async () => {
+  test('แก้ audit log ของการลบไม่ได้แม้เป็น owner และ admin ลบไม่ได้', async () => {
     await seed('approved')
     await assertSucceeds(remove('owner1'))
     await assertFails(updateDoc(doc(tenant('owner1'), 'auditLogs/delete_bk1'), { reason: 'x' }))
-    await assertFails(deleteDoc(doc(tenant('owner1'), 'auditLogs/delete_bk1')))
+    await assertFails(deleteDoc(doc(tenant('admin1'), 'auditLogs/delete_bk1')))
   })
 })
 

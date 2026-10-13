@@ -539,7 +539,7 @@ service cloud.firestore {
               'booking.cancel_self', 'booking.cancel_request', 'booking.cancel_approve', 'booking.cancel_deny',
               'booking.cancel_admin', 'booking.expire', 'refund.record', 'settings.update', 'stall.close',
               'stall.open', 'user.role_change', 'legacy.end', 'booking.delete', 'booking.cancel_withdraw',
-              'booking.receipt_issue', 'report.export'];
+              'booking.receipt_issue', 'report.export', 'auditlog.purge'];
     }
 
     function auditTenantActions() {
@@ -549,7 +549,9 @@ service cloud.firestore {
 
     match /auditLogs/{auditId} {
       allow read: if isAdmin();
-      allow update, delete: if false;
+      allow update: if false;
+      // ลบได้เฉพาะ owner (ปุ่มลบในหน้าบันทึกการทำงาน) ส่วน admin ลบไม่ได้
+      allow delete: if isOwner();
       allow create: if isNotAnonymous()
         && request.resource.data.keys().hasOnly(['at', 'actorUid', 'actorName', 'actorRole', 'action', 'targetType',
              'targetId', 'marketId', 'before', 'after', 'reason', 'bookingId'])

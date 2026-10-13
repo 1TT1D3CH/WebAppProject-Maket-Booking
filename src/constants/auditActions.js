@@ -20,7 +20,8 @@ export const AUDIT_ACTIONS = {
   'booking.delete': 'ลบการจองถาวร',
   'booking.cancel_withdraw': 'ผู้เช่าถอนคำขอยกเลิก',
   'booking.receipt_issue': 'ออกเลขใบเสร็จ',
-  'report.export': 'ส่งออกรายงานรายได้'
+  'report.export': 'ส่งออกรายงานรายได้',
+  'auditlog.purge': 'ลบบันทึกการทำงาน'
 }
 
 export const AUDIT_ACTION_KEYS = Object.keys(AUDIT_ACTIONS)

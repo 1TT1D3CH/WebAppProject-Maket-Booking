@@ -5,6 +5,13 @@
         <h2 class="text-base font-bold text-slate-900 dark:text-white">บันทึกการทำงาน</h2>
         <span class="text-[11px] text-slate-500 dark:text-slate-400">โหลดแล้ว {{ store.rows.length }} รายการ</span>
       </div>
+      <!-- เฉพาะ owner: ลบบันทึกที่แสดงอยู่ทั้งหมด (ตามตัวกรอง) -->
+      <div v-if="authStore.isOwner && store.visible.length" class="flex items-center justify-between gap-2 rounded-xl border border-rose-200 dark:border-rose-900 px-3 py-2">
+        <span class="text-xs text-slate-600 dark:text-slate-300">ลบบันทึกที่แสดงอยู่ {{ store.visible.length }} รายการ</span>
+        <button type="button" class="min-h-[44px] px-4 rounded-xl border-2 border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 text-sm font-semibold inline-flex items-center gap-1.5" :disabled="deleting" @click="removeMany">
+          <Trash2 class="w-4 h-4" /> {{ deleting ? 'กำลังลบ...' : 'ลบทั้งหมดที่แสดง' }}
+        </button>
+      </div>
 
       <form class="grid grid-cols-2 lg:grid-cols-6 gap-2" @submit.prevent="store.load()">
         <label class="text-[11px] text-slate-500 dark:text-slate-400">ตั้งแต่วันที่
@@ -46,6 +53,7 @@
           <tr>
             <th class="p-3">เวลา</th><th class="p-3">คนทำ</th><th class="p-3">การกระทำ</th>
             <th class="p-3">เป้าหมาย</th><th class="p-3">การเปลี่ยนแปลง</th><th class="p-3">เหตุผล</th>
+            <th v-if="authStore.isOwner" class="p-3"></th>
           </tr>
         </thead>
         <tbody>
@@ -56,6 +64,9 @@
             <td class="p-3 text-xs">{{ targetOf(r) }}</td>
             <td class="p-3 text-xs">{{ changeOf(r) }}</td>
             <td class="p-3 text-xs">{{ r.reason || '-' }}</td>
+            <td v-if="authStore.isOwner" class="p-3">
+              <button type="button" class="w-11 h-11 inline-flex items-center justify-center rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40" aria-label="ลบบันทึกนี้" :disabled="deleting" @click="removeOne(r)"><Trash2 class="w-4 h-4" /></button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -72,6 +83,9 @@
           </div>
           <div v-if="changeOf(r)" class="text-xs text-indigo-700 dark:text-indigo-300 mt-1">{{ changeOf(r) }}</div>
           <div v-if="r.reason" class="text-xs text-slate-500 mt-1">เหตุผล: {{ r.reason }}</div>
+          <button v-if="authStore.isOwner" type="button" class="mt-2 min-h-[44px] px-3 rounded-xl text-rose-700 dark:text-rose-300 text-xs font-semibold inline-flex items-center gap-1.5 border border-rose-200 dark:border-rose-900" :disabled="deleting" @click="removeOne(r)">
+            <Trash2 class="w-4 h-4" /> ลบบันทึกนี้
+          </button>
         </div>
       </div>
 
@@ -85,17 +99,43 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
+import { Trash2 } from 'lucide-vue-next'
 import { useAuditLogStore } from '../../stores/auditLogStore'
+import { useAuthStore } from '../../stores/authStore'
+import { useMarketStore } from '../../stores/marketStore'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { AUDIT_ACTIONS, ROLE_LABEL, STATUS_LABEL_TH, actionLabel } from '../../constants/auditActions'
 import { summarizeChange } from '../../utils/auditDiff'
 import { formatThaiDateTime } from '../../utils/date'
 
 const store = useAuditLogStore()
+const authStore = useAuthStore()
+const marketStore = useMarketStore()
+const deleting = ref(false)
 const { isDesktop } = useBreakpoint()
 
 onMounted(() => { if (!store.rows.length) store.load() })
+
+// ลบบันทึกการทำงาน (เฉพาะ owner) ยืนยัน 2 รอบ กู้คืนไม่ได้ แต่จะเหลือบันทึก "ลบบันทึกการทำงาน" ไว้ 1 รายการ
+async function runRemove(rows, label) {
+  if (deleting.value || !rows.length) return
+  if (!window.confirm(`ลบ${label}?
+ลบแล้วกู้คืนไม่ได้`)) return
+  if (!window.confirm(`ยืนยันอีกครั้ง: ลบ${label} จริง ๆ ใช่ไหม?`)) return
+  deleting.value = true
+  try {
+    const n = await store.remove(rows, authStore.auditActor)
+    marketStore.showNotification(`ลบบันทึกการทำงาน ${n} รายการ`, 'success')
+  } catch (err) {
+    console.error('Delete audit logs error:', err)
+    marketStore.showNotification(err.code === 'permission-denied' ? 'ไม่มีสิทธิ์ลบ (เฉพาะ owner หรือ rules ยังไม่ได้ deploy)' : (err.message || 'ลบไม่สำเร็จ'), 'error')
+  } finally {
+    deleting.value = false
+  }
+}
+const removeOne = (r) => runRemove([r], `บันทึก "${actionLabel(r.action)}" รายการนี้`)
+const removeMany = () => runRemove([...store.visible], `บันทึกการทำงานที่แสดงอยู่ ${store.visible.length} รายการ`)
 
 const timeOf = (r) => (r.at?.toDate ? formatThaiDateTime(r.at.toDate()) : '-')
 

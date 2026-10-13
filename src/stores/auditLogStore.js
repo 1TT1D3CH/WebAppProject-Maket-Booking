@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { fetchAuditPage } from '../services/auditLog'
+import { fetchAuditPage, deleteAuditLogs } from '../services/auditLog'
 
 function describeError(err) {
   if (err?.code === 'permission-denied') return 'ไม่มีสิทธิ์ดูบันทึกการทำงาน (ต้องเป็น admin หรือ owner)'
@@ -63,6 +63,14 @@ export const useAuditLogStore = defineStore('auditLog', {
       } finally {
         this.loading = false
       }
+    },
+
+    /** (owner) ลบ log ที่เลือก แล้วเอาออกจากรายการที่โหลดไว้ คืนจำนวนที่ลบ */
+    async remove(rows, actor) {
+      const n = await deleteAuditLogs(rows.map(r => r.id), actor)
+      const gone = new Set(rows.map(r => r.id))
+      this.rows = this.rows.filter(r => !gone.has(r.id))
+      return n
     },
 
     reset() {

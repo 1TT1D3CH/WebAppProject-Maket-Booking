@@ -1,4 +1,4 @@
-import { doc, collection, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, Timestamp } from 'firebase/firestore'
+import { doc, collection, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, Timestamp, writeBatch } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
 const NAME_MAX = 80
@@ -58,4 +58,29 @@ export async function fetchAuditPage({ bookingId, action, from, to, cursor, page
     cursor: snap.docs.length ? snap.docs[snap.docs.length - 1] : cursor || null,
     done: snap.docs.length < pageSize
   }
+}
+
+/**
+ * (เฉพาะ owner) ลบ audit log ตาม id แล้วเขียน log สรุป 'auditlog.purge' (จำนวน + เหตุผล) ใน batch เดียวกัน
+ * log สรุปนี้ลบด้วยฟังก์ชันนี้ไม่ได้ในรอบเดียวกัน เพื่อให้ยังเห็นว่าใครล้างบันทึกเมื่อไร
+ * @returns {Promise<number>} จำนวนที่ลบ
+ */
+export async function deleteAuditLogs(ids, actor) {
+  if (!actor?.uid || actor.role !== 'owner') throw new Error('เฉพาะเจ้าของตลาด (owner) เท่านั้นที่ลบบันทึกการทำงานได้')
+  const unique = [...new Set(ids)].filter(Boolean)
+  const CHUNK = 400 // 1 batch = ลบ N + log สรุป 1 (เพดาน 500)
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const part = unique.slice(i, i + CHUNK)
+    const batch = writeBatch(db)
+    addAuditToBatch(batch, {
+      actor,
+      action: 'auditlog.purge',
+      targetType: 'settings',
+      targetId: 'auditLogs',
+      after: { deletedCount: part.length }
+    })
+    part.forEach(id => batch.delete(doc(db, 'auditLogs', id)))
+    await batch.commit()
+  }
+  return unique.length
 }
