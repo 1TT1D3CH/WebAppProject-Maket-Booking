@@ -1082,11 +1082,14 @@ export async function decideCancellation({ bookingId, mode, reason = '', refundA
     })
     const update = { ...common, status: 'cancelled', wasApproved: true, refund, lastAuditId: auditId }
     if (cleanReason) update.statusReason = cleanReason
+    // ปล่อย lock ทุกช่องของการจองที่ถูกยกเลิก (ไม่ใช่แค่ช่องที่ยังไม่ถึงวันขาย)
+    // ไม่งั้นช่องวันนี้/ที่ผ่านมาแล้วจะค้าง lock และลูกค้ายังเห็นแผงเป็น "จองแล้ว" ทั้งที่ admin อนุมัติยกเลิกแล้ว
+    // releasedSlots ยังเป็นช่องที่ยังไม่ถึงวันขายเหมือนเดิม เพราะ revenue.js ใช้นับรายได้ที่ยังคงอยู่
     if (isSlot) update.releasedSlots = suggestion.releaseSlots
     tx.update(bookingRef, update)
     if (isSlot) {
       for (const ls of lockSnaps) {
-        if (ls.exists() && ls.data().bookingId === bookingId && suggestion.releaseSlots.includes(ls.data().slotKey)) tx.delete(ls.ref)
+        if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
       }
     }
     if (sSnap.exists()) {

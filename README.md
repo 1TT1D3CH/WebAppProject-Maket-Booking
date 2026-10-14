@@ -11,7 +11,10 @@ npm run dev
 npm run build
 ```
 
-ไม่มี `.env` → แอปทำงานโหมด Local (localStorage) ใช้ดูผัง/ทดลองลากวางได้ แต่สมัคร/ล็อกอิน/จองไม่ได้
+**ต้องมี `.env`** (ไฟล์นี้อยู่ใน .gitignore จึงไม่ติดมากับ git — ขอค่าจากเจ้าของโปรเจกต์หรือคัดลอกจาก Firebase Console > Project settings > Your apps)
+ถ้าไม่มี: `npm run build` จะหยุดพร้อมแจ้ง key ที่ขาด, `npm run dev` จะขึ้น error "ไม่พบค่า Firebase config" และหน้าเว็บว่าง
+
+ต้องใช้ Node 18+ (ทดสอบกับ Node 26) และหลัง `npm install` ถ้าเห็นคำเตือน `allow-scripts` ของ `@firebase/util` / `protobufjs` ไม่กระทบการ build
 
 ## ตั้งค่า Firebase (ต้องทำก่อนใช้งานจริง)
 
