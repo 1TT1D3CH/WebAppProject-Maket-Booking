@@ -61,7 +61,8 @@ export const useSlipReviewStore = defineStore('slipReview', {
       this.unsubs = [
         listen('pending', ['pending'], { order: 'asc' }),
         listen('needsSlip', ['needs_slip'], { order: 'asc' }),
-        listen('decided', ['approved', 'rejected'], { order: 'desc', max: 50 }),
+        // ตัดสินแล้ว = ทุกผลการตัดสิน: อนุมัติ / ปฏิเสธ / ยกเลิก (รวมคืนเงินแล้ว) / หมดเวลา
+        listen('decided', ['approved', 'rejected', 'cancelled', 'expired'], { order: 'desc', max: 100 }),
         listen('awaiting', ['awaiting_slip'], { order: 'asc' }),
         listen('cancelReq', ['cancel_requested'], { order: 'asc' }),
         listen('cancelled', ['cancelled'], { order: 'desc', max: 100 })

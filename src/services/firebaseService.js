@@ -24,6 +24,7 @@ import { isHoldExpired } from '../utils/holdTimer'
 import { suggestRefund } from '../utils/refundPolicy'
 import { formatReceiptNo, thaiYearOf, formatBaht } from '../utils/receipt'
 import { todayBangkok, addDays } from '../utils/date'
+import { MAX_SLOTS_LIMIT } from '../utils/marketCalendar'
 import { canDeleteBooking, confirmCodeMatches, deleteConfirmCode, snapshotForAudit, DELETE_REASON_MIN, DELETE_REASON_MAX } from '../utils/bookingDelete'
 
 const MARKET_ID = 'main-layout'
@@ -363,6 +364,15 @@ export async function decideBooking({ bookingId, decision, reason = '', actor, r
     // การจองตามวัน/รอบ: สถานะแผงไม่เปลี่ยน ต้องเปลี่ยน lock ของทุก slot แทน (อ่านก่อนเขียน)
     const isSlot = Array.isArray(b.slots) && b.slots.length > 0
     const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+    // rules ตรวจ lock ครบทุกช่องไม่ได้เมื่อจองเกิน 14 ช่อง: ก่อนอนุมัติต้องมี lock ของการจองนี้ครบทุกช่อง
+    if (decision === 'approved' && isSlot && b.slots.length > 14) {
+      const bad = b.slots.filter((k, i) => !lockSnaps[i].exists() || lockSnaps[i].data().bookingId !== bookingId)
+      if (bad.length) {
+        const err = new Error(`การจองนี้ไม่มี lock กันซ้ำครบ ${bad.length} ช่อง (เช่น ${bad[0]}) อนุมัติไม่ได้ กรุณาปฏิเสธรายการนี้แล้วให้ผู้เช่าจองใหม่`)
+        err.code = 'locks-incomplete'
+        throw err
+      }
+    }
 
     // ออกเลขใบเสร็จตอนอนุมัติ (อ่านตัวนับก่อนเขียนอะไรทั้งหมด)
     let receipt = null
@@ -691,7 +701,7 @@ export async function bookStallSlots(stallId, customerInfo) {
   const awaiting = !customerInfo.slip?.dataUrl
   const holdMinutes = Math.round(Number(customerInfo.holdMinutes) || 30)
   const slots = [...new Set(customerInfo.slots || [])].sort()
-  if (slots.length < 1 || slots.length > 7) throw new Error('เลือกวัน/รอบได้ครั้งละ 1-7 ช่อง')
+  if (slots.length < 1 || slots.length > MAX_SLOTS_LIMIT) throw new Error(`เลือกวัน/รอบได้ครั้งละ 1-${MAX_SLOTS_LIMIT} ช่อง`)
 
   const stallRef = doc(stallsCol(), stallId)
   const bookingRef = doc(collection(db, 'bookings'))
@@ -756,9 +766,11 @@ export async function bookStallSlots(stallId, customerInfo) {
       bookingDoc.slipUploadedAt = serverTimestamp()
     }
     tx.set(bookingRef, bookingDoc)
-    for (const key of slots) {
+    for (const [seq, key] of slots.entries()) {
       const [date, roundId] = key.split('_')
       const lock = { marketId: MARKET_ID, stallId, date, roundId, slotKey: key, bookingId: bookingRef.id, status: bookingDoc.status, createdAt: serverTimestamp() }
+      // 8-14 ช่อง rules ตรวจ lock เป็นลูกโซ่ด้วย seq (ลำดับใน booking.slots); ช่วงอื่นห้ามใส่
+      if (slots.length > 7 && slots.length <= 14) lock.seq = seq
       if (awaiting) { lock.holdStartedAt = serverTimestamp(); lock.holdMinutes = holdMinutes }
       if (shopName) lock.shopName = shopName
       if (goodsType) lock.goodsType = goodsType

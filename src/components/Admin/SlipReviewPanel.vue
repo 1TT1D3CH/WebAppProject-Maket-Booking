@@ -93,7 +93,7 @@ const { isDesktop } = useBreakpoint()
 
 const STATUS_LABEL = {
   pending: 'รอตรวจ', needs_slip: 'ขอสลิปใหม่', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว',
-  awaiting_slip: 'รอชำระเงิน', cancel_requested: 'ขอยกเลิก', cancelled: 'ยกเลิกแล้ว'
+  awaiting_slip: 'รอชำระเงิน', cancel_requested: 'ขอยกเลิก', cancelled: 'ยกเลิกแล้ว', expired: 'หมดเวลา'
 }
 const tab = ref('pending')
 const authStore = useAuthStore()
@@ -178,6 +178,8 @@ function badgeClass(status) {
     approved: 'text-emerald-600 dark:text-emerald-400',
     rejected: 'text-rose-600 dark:text-rose-400',
     cancel_requested: 'text-sky-600 dark:text-sky-400',
+    cancelled: 'text-slate-600 dark:text-slate-400',
+    expired: 'text-slate-500 dark:text-slate-400',
     awaiting_slip: 'text-amber-600 dark:text-amber-400'
   }[status] || 'text-slate-500'
 }

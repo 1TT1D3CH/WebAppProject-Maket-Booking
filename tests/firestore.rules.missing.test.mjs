@@ -323,6 +323,18 @@ describe('ยกเลิกและคืนเงิน (ส่วน 4)', ()
     await assertSucceeds(direct({ statusReason: 'ตลาดปิดฉุกเฉิน' }))
   })
 
+  test('การจอง 365 ช่อง: admin อนุมัติคำขอยกเลิก + ปล่อย lock ทุกช่อง (releasedSlots 365) ผ่าน', async () => {
+    const keys = Array.from({ length: 365 }, (_, i) => `${new Date(Date.UTC(2026, 10, 1 + i)).toISOString().slice(0, 10)}_all`)
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, 'bookings/big'), bookingData({ slots: keys, firstDate: keys[0].slice(0, 10), lastDate: keys[364].slice(0, 10), totalAmount: 500 * 365, amountDue: 500 * 365, status: 'cancel_requested', cancelRequest: { reason: 'x', requestedAt: T(5) } }))
+      for (const k of keys) await setDoc(doc(db, `bookingLocks/s1_${k}`), lockData('big', { slotKey: k, date: k.slice(0, 10) }))
+    })
+    await assertSucceeds(upd('admin1', 'big', {
+      status: 'cancelled', wasApproved: true, releasedSlots: keys, refund: refund({ amount: 500, suggestedAmount: 500 }), decidedBy: 'admin1', decidedAt: serverTimestamp(), cancelRequest: deleteField()
+    }, 'booking.cancel_approve', (b, db) => { for (const k of keys) b.delete(doc(db, `bookingLocks/s1_${k}`)) }))
+  })
+
   test('ยกเลิกโดยไม่มี audit log ไม่ผ่าน', async () => {
     await reqCancel()
     const db = tenant('admin1')

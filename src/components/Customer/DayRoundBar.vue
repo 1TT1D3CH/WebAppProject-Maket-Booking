@@ -6,28 +6,38 @@
           :class="slots.selectedDate === today ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700'"
           @click="slots.goToday()">วันนี้</button>
 
-        <!-- วันเปิดตลาด 14 วันถัดไป เลื่อนแนวนอน -->
-        <div class="flex-1 min-w-0 flex gap-1.5 overflow-x-auto scrollbar-none pb-0.5" role="listbox" aria-label="เลือกวันขาย">
-          <button
-            v-for="d in dates" :key="d" type="button" role="option" :aria-selected="d === slots.selectedDate"
-            class="shrink-0 min-h-[44px] min-w-[52px] px-2 rounded-xl border text-center leading-tight transition"
-            :class="d === slots.selectedDate
-              ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'"
-            @click="slots.selectDate(d)"
-          >
-            <div class="text-[10px] opacity-80">{{ parts(d).dow }}</div>
-            <div class="text-sm font-bold font-mono">{{ parts(d).day }}</div>
-            <div class="text-[10px] opacity-80">{{ parts(d).month }}</div>
+        <!-- ‹ วันเปิดก่อนหน้า | ปุ่มวัน (เปิดปฏิทิน) | วันเปิดถัดไป › -->
+        <div class="relative flex-1 min-w-0 flex items-center gap-1.5">
+          <button type="button" class="shrink-0 w-11 min-h-[44px] rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 flex items-center justify-center disabled:opacity-30"
+            :disabled="!hasPrev" aria-label="วันเปิดตลาดก่อนหน้า" @click="slots.selectOpenDay(-1)">
+            <ChevronLeft class="w-4 h-4" />
           </button>
-        </div>
 
-        <!-- เลือกวันอื่นจากปฏิทิน -->
-        <label class="shrink-0 min-h-[44px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer">
-          <CalendarDays class="w-4 h-4" />
-          <span class="hidden sm:inline">วันอื่น</span>
-          <input type="date" class="sr-only" :min="today" :value="slots.selectedDate" @change="onPickDate" />
-        </label>
+          <button type="button" class="flex-1 min-w-0 min-h-[44px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center justify-center gap-2"
+            :aria-expanded="calOpen" aria-haspopup="dialog" @click="calOpen = !calOpen">
+            <CalendarDays class="w-4 h-4 shrink-0 text-indigo-600" />
+            <span class="truncate">{{ formatThaiDate(slots.selectedDate) }}</span>
+            <ChevronDown class="w-4 h-4 shrink-0 opacity-60" />
+          </button>
+
+          <button type="button" class="shrink-0 w-11 min-h-[44px] rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 flex items-center justify-center disabled:opacity-30"
+            :disabled="!hasNext" aria-label="วันเปิดตลาดถัดไป" @click="slots.selectOpenDay(1)">
+            <ChevronRight class="w-4 h-4" />
+          </button>
+
+          <!-- ปฏิทิน: คอม = popover ใต้ปุ่ม, มือถือ = bottom sheet -->
+          <template v-if="calOpen">
+            <div class="fixed inset-0 z-40 bg-black/40 sm:bg-transparent" @click="calOpen = false" />
+            <div role="dialog" aria-label="เลือกวันขาย"
+              class="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl sm:rounded-2xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-full sm:left-1/2 sm:-translate-x-1/2 sm:mt-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:w-[360px]">
+              <BookingCalendar
+                mode="single" :model-value="slots.selectedDate" :min-date="slots.minDate" :max-date="slots.maxDate"
+                :is-disabled="slots.dayDisabled" @update:model-value="onPickDate"
+              />
+              <button type="button" class="sm:hidden mt-3 w-full min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200" @click="calOpen = false">ปิด</button>
+            </div>
+          </template>
+        </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
@@ -51,27 +61,22 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { CalendarDays } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import BookingCalendar from '../booking/BookingCalendar.vue'
 import { useSlotStore } from '../../stores/slotStore'
 import { todayBangkok, formatThaiDate } from '../../utils/date'
+import { nextBookableDate } from '../../utils/marketCalendar'
 
 const slots = useSlotStore()
 const today = computed(() => todayBangkok())
+const calOpen = ref(false)
 
-// วันที่เลือกอยู่ (ถ้าไม่อยู่ใน 14 วัน เช่น เลือกจากปฏิทิน) ต่อท้ายแถบให้เห็นว่าเลือกอะไรอยู่
-const dates = computed(() => {
-  const list = [...slots.quickDates]
-  if (!list.includes(slots.selectedDate)) list.push(slots.selectedDate)
-  return list.sort()
-})
+const hasPrev = computed(() => !!nextBookableDate(slots.settings, slots.selectedDate, -1))
+const hasNext = computed(() => !!nextBookableDate(slots.settings, slots.selectedDate, 1))
 
-function parts(key) {
-  const [dow, day, month] = formatThaiDate(key).split(' ')
-  return { dow, day, month }
-}
-
-function onPickDate(e) {
-  if (e.target.value) slots.selectDate(e.target.value)
+function onPickDate(date) {
+  if (date) slots.selectDate(date)
+  calOpen.value = false
 }
 </script>

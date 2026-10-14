@@ -1,0 +1,596 @@
+===============================================================================
+ สรุปโปรเจกต์ + อธิบายโค้ด (สำหรับนำเสนอ)
+ Dynamic Market Stall Booking System
+ ระบบจองแผงตลาด "ตลาดยามเย็น Walking Street KKU"
+ จัดทำวันที่ 2026-10-15   |   branch main   |   68 commits   |   เวอร์ชัน 0.9
+===============================================================================
+
+สารบัญ
+  1. โปรเจกต์นี้คืออะไร
+  2. เทคโนโลยีที่ใช้
+  3. สถาปัตยกรรมภาพรวม (Frontend / Backend)
+  4. โครงสร้างโฟลเดอร์
+  5. บทบาทผู้ใช้ และสิทธิ์
+  6. ฟีเจอร์หลักของระบบ
+  7. Frontend: อธิบายโค้ดทีละส่วน
+  8. Backend (Firebase): Firestore, Rules, Index
+  9. โครงสร้างข้อมูล (Collections)
+  10. ขั้นตอนการจอง (Flow) และสถานะของการจอง
+  11. ความปลอดภัย
+  12. การทดสอบ (Tests)
+  13. วิธีติดตั้ง รัน และ deploy
+  14. ข้อจำกัด / สิ่งที่ควรพัฒนาต่อ
+  15. (ภาคผนวก) อธิบายไฟล์ทีละไฟล์
+
+
+===============================================================================
+ 1. โปรเจกต์นี้คืออะไร
+===============================================================================
+
+เว็บแอปจองแผงขายของในตลาดนัด (ตลาดยามเย็น Walking Street KKU) ผู้ใช้ 3 กลุ่ม
+  - ผู้เช่า (tenant)   : ดูผังตลาด เลือกวัน/รอบ เลือกแผง จองหลายวันในครั้งเดียว
+                          โอนเงิน (PromptPay) แนบสลิป ติดตามสถานะ ยกเลิก/ขอคืนเงิน
+                          ดาวน์โหลดใบเสร็จ
+  - ผู้ดูแล (admin)    : วาด/แก้ผังตลาดแบบลากวาง ตรวจสลิป อนุมัติ/ปฏิเสธ
+                          จัดการยกเลิกและคืนเงิน ดูบันทึกการทำงาน (audit log)
+  - เจ้าของ (owner)    : ทำได้ทุกอย่างของ admin + ดูรายงานรายได้ (ส่งออก Excel/CSV)
+                          + จัดการสมาชิก/สิทธิ์ + ลบบันทึกการทำงาน
+
+ตัวระบบเป็น Single Page Application ไม่มี server ของตัวเอง
+ใช้ Firebase (Authentication + Firestore) เป็น backend ทั้งหมด
+และใช้ "Firestore Security Rules" เป็นตัวบังคับกติกาทางธุรกิจแทน server
+
+
+===============================================================================
+ 2. เทคโนโลยีที่ใช้
+===============================================================================
+
+ ส่วน            เทคโนโลยี                         หน้าที่
+ --------------  --------------------------------  ------------------------------
+ Frontend        Vue 3 (<script setup>)            สร้าง UI แบบ component
+                 Pinia                             จัดการ state กลาง (stores)
+                 Tailwind CSS 3                    จัดสไตล์ รองรับ dark mode
+                 Vite 5                            dev server + build
+                 lucide-vue-next                   ไอคอน
+                 vue-router                        ติดตั้งไว้ (ดูหมายเหตุข้อ 14)
+ Backend         Firebase Authentication           ล็อกอิน Email/Password + Google
+                 Cloud Firestore                   ฐานข้อมูล NoSQL realtime
+                 Firestore Security Rules          ตรวจสิทธิ์และกติกาข้อมูลฝั่งฐานข้อมูล
+                 Firebase Hosting                  โฮสต์เว็บ (ไฟล์ใน dist/)
+ ทดสอบ           node:test (Node.js)               unit test 129 ข้อ
+                 @firebase/rules-unit-testing      ทดสอบ rules ด้วย Firestore emulator
+ เครื่องมือ      firebase-admin (scripts/)         สคริปต์สร้างบัญชี staff / ลบสมาชิก
+ ฟอนต์           Prompt + Plus Jakarta Sans        รองรับภาษาไทย
+
+จุดเด่นทางเทคนิค
+  - ไม่พึ่ง library ภายนอกเพิ่มสำหรับ Excel: เขียนตัวสร้างไฟล์ .xlsx เอง (src/utils/xlsx.js)
+  - วันที่ทั้งแอปยึดเขตเวลาไทย (Asia/Bangkok) ไม่ขึ้นกับเครื่องผู้ใช้
+  - ตรรกะธุรกิจแยกเป็นฟังก์ชันล้วน (utils/) จึงทดสอบอัตโนมัติได้ง่าย
+  - ใช้ transaction ทุกจุดที่แก้หลายเอกสารพร้อมกัน เพื่อไม่ให้ข้อมูลค้างครึ่งทาง
+
+
+===============================================================================
+ 3. สถาปัตยกรรมภาพรวม
+===============================================================================
+
+   [ เบราว์เซอร์ผู้ใช้ ]
+        │  Vue 3 + Pinia (Frontend)
+        │   ├─ components/  = หน้าจอ
+        │   ├─ stores/      = state + logic ของแต่ละเรื่อง
+        │   ├─ services/    = ฟังก์ชันคุย Firestore (transaction/batch)
+        │   └─ utils/       = ฟังก์ชันล้วน (วันที่ ปฏิทิน รายได้ คืนเงิน ฯลฯ)
+        ▼
+   [ Firebase SDK ]  ── Auth ──►  Firebase Authentication
+        │
+        └── Firestore ──►  Cloud Firestore  ◄── firestore.rules (ตรวจทุกคำสั่งอ่าน/เขียน)
+                             │
+                             └ ข้อมูล realtime ส่งกลับมาที่ stores ผ่าน onSnapshot
+
+หลักคิด: Frontend ทำ UI + ตรวจเบื้องต้น, Firestore Rules ตัดสินสุดท้าย
+(ถ้า client ถูกแก้/ข้ามการตรวจ ฐานข้อมูลก็ยังปฏิเสธคำสั่งที่ผิดกติกา)
+
+ลำดับเริ่มแอป
+  index.html → src/main.js → โหลด App.vue แบบ dynamic (ดักข้อผิดพลาดตอนเริ่ม
+  เช่น .env ไม่ครบ) → App.vue เรียก authStore.initAuth(), marketStore.initFirebaseSync(),
+  slotStore.startSettings() แล้วสลับหน้าตาม marketStore.activeMode
+
+
+===============================================================================
+ 4. โครงสร้างโฟลเดอร์
+===============================================================================
+
+ index.html                 หน้า HTML หลัก (โหลดฟอนต์ ไทย)
+ package.json               dependency + script (dev/build/test/deploy)
+ vite.config.js             ตั้งค่า Vite (alias '@', บังคับให้มี .env ตอน build)
+ tailwind.config.js         ธีมสี ฟอนต์ ความสูงบรรทัดสำหรับภาษาไทย
+ postcss.config.js          Tailwind + autoprefixer
+ firebase.json / .firebaserc  ตั้งค่า Firebase Hosting, Firestore, emulator
+ firestore.rules            กฎความปลอดภัยของฐานข้อมูล (674 บรรทัด) ** หัวใจ backend **
+ firestore.indexes.json     Index ของ Firestore (8 ตัว)
+ .env.example               ตัวอย่างตัวแปรสภาพแวดล้อม (ค่า Firebase, PromptPay ฯลฯ)
+ README.md                  คู่มือเริ่มต้นใช้งาน
+ scripts/                   สคริปต์ Node (ใช้ firebase-admin)
+ src/                       Frontend ทั้งหมด
+ tests/                     unit test + rules test
+ docs/ , prompt/            เอกสารประกอบการพัฒนา
+
+ src/
+  ├─ main.js                จุดเริ่มต้นแอป
+  ├─ App.vue                ตัวหลัก: สลับโหมดหน้าจอ + รวม modal ทั้งหมด
+  ├─ style.css              สไตล์รวม (Tailwind layers, class ลัด เช่น icon-btn)
+  ├─ firebase.js            เริ่มต้น Firebase (อ่านค่า VITE_FIREBASE_*)
+  ├─ firebase/config.js     re-export จาก firebase.js (ให้ import path เดิมใช้ได้)
+  ├─ stores/                Pinia stores (9 ตัว)
+  ├─ services/              ชั้นคุย Firestore (4 ไฟล์)
+  ├─ utils/                 ฟังก์ชันช่วยเหลือล้วน ๆ (22 ไฟล์)
+  ├─ composables/           Vue composables (3 ไฟล์)
+  ├─ constants/             ค่าคงที่ (audit actions, ค่าจอง)
+  ├─ types/market.js        ข้อมูลเริ่มต้นของผัง (โซน แผง วัตถุ) และ preset
+  ├─ router/ , views/       ชุดหน้าเก่า (ดูหมายเหตุข้อ 14)
+  └─ components/            คอมโพเนนต์ UI
+       ├─ layout/    AppHeader, HeaderNavTabs, UserMenu
+       ├─ builder/   BuilderPageBar
+       ├─ canvas/    แถบเครื่องมือของผัง (CanvasToolbar + ส่วนย่อย)
+       ├─ Admin/     StallCanvas, modal แก้ไข, ตรวจสลิป, รายได้, audit, สมาชิก
+       │   └ slip/   ส่วนย่อยของหน้าตรวจสลิป
+       ├─ Customer/  CustomerStallMap, BookingModal, MyBookingsModal, ReceiptView
+       ├─ booking/   BookingCalendar (ปฏิทินเลือกวัน)
+       ├─ Auth/      AuthModal, แจ้งเตือน, โปรไฟล์, เปลี่ยนรหัสผ่าน
+       ├─ shared/    StallView (ตัววาดแผงที่ใช้ร่วมกัน)
+       └─ ui/        BaseModal
+
+
+===============================================================================
+ 5. บทบาทผู้ใช้ และสิทธิ์
+===============================================================================
+
+ บทบาท   ทำอะไรได้
+ ------  -----------------------------------------------------------------------
+ guest   ดูผังตลาดและสถานะแผงได้ (ยังจองไม่ได้ ต้องล็อกอิน)
+ tenant  จองแผง/แนบสลิป/ส่งสลิปใหม่/ยกเลิก/ขอยกเลิกพร้อมขอคืนเงิน/ดูใบเสร็จ
+         ดูและลบแจ้งเตือนของตัวเอง
+ admin   แก้ผังตลาด, ตั้งค่าตลาดและกติกาการจอง, ตรวจสลิป, ตัดสินยกเลิก/คืนเงิน,
+         ลบการจอง, ดูสมาชิก, ดู audit log, ออกเลขใบเสร็จย้อนหลัง
+ owner   เหมือน admin + รายงานรายได้/ส่งออก, เปลี่ยนสิทธิ์สมาชิก, ลบ audit log,
+         ลบการจองที่ออกใบเสร็จแล้ว
+
+การสมัครด้วยตัวเองได้ role = tenant เสมอ (rules บังคับ) ห้ามแก้ role ของตัวเอง
+บัญชี admin/owner สร้างด้วยสคริปต์ scripts/seed-staff.mjs ล็อกอินด้วย "ชื่อผู้ใช้"
+(แปลงเป็นอีเมลภายในโดเมน VITE_STAFF_EMAIL_DOMAIN)
+
+
+===============================================================================
+ 6. ฟีเจอร์หลักของระบบ
+===============================================================================
+
+ ฝั่งลูกค้า
+  - ผังตลาดแบบ interactive: ซูม/เลื่อน, กรองตามโซน/สถานะ, ค้นหาเลขแผง
+  - แถบเลือกวัน + รอบ (DayRoundBar) และปฏิทินรายเดือน (BookingCalendar)
+  - สีของแผงเปลี่ยนตามสถานะของ "วัน/รอบที่เลือก" แบบ realtime
+  - จองหลายวัน/หลายรอบในครั้งเดียว (เลือกเร็ว / เลือกเป็นช่วง) จำกัดสูงสุดตามตั้งค่า
+  - กันแผงระหว่างรอโอนเงิน มีตัวนับถอยหลัง (ค่าเริ่มต้น 30 นาที) หมดเวลาแล้วแผงว่าง
+  - แนบสลิป: บีบอัดรูปในเบราว์เซอร์ (JPG/PNG/WebP) + คำนวณ hash กันสลิปซ้ำ
+  - หน้า "การจองของฉัน": แท็บ ต้องทำ/ที่จะถึง/ผ่านมาแล้ว/ปิดแล้ว, timeline,
+    ส่งสลิปใหม่เมื่อถูกขอ, ยกเลิก, ขอยกเลิกพร้อมแนะนำยอดคืนตามนโยบาย
+  - ใบเสร็จรับเงิน (เลขที่ R2569-000001 + จำนวนเงินตัวหนังสือไทย) พิมพ์/บันทึกได้
+  - ศูนย์แจ้งเตือน (ผลตรวจสลิป ผังเปลี่ยน ฯลฯ)
+  - ล็อกอินด้วย Email/Password และ Google, ลืมรหัสผ่าน, ขอเบอร์โทรครั้งแรก
+
+ ฝั่งผู้ดูแล / เจ้าของ
+  - Admin Builder: ลากวางแผง/วัตถุ (ทางเข้า ห้องน้ำ เวที ฯลฯ), เปลี่ยนขนาด/หมุน,
+    snap กริด, ปุ่มลูกศรเลื่อน, Delete ลบ, แถบเครื่องมือ responsive
+  - จัดการโซน (สี/ราคา), ตั้งค่าตลาด (ชื่อ ขนาดเมตร กริด)
+  - ตั้งค่าการจอง: วันเปิดตลาด, รอบขาย (สูงสุด 6), เวลาปิดรับ, จำนวนวันจองล่วงหน้า,
+    เวลากันแผง, เวลาส่งสลิปใหม่, นโยบายคืนเงิน
+  - ตรวจสลิป: รายการรอตรวจ, ดูรูปสลิป (ซูม/ลาก), เตือนสลิปซ้ำ, อนุมัติ/ปฏิเสธ/ขอสลิปใหม่
+  - ตัดสินคำขอยกเลิก, บันทึกการคืนเงิน (แนบสลิปคืนเงิน), ยกเลิกโดย admin
+  - ลบการจองถาวร (ยืนยัน 2 ขั้น พิมพ์รหัสแผงยืนยัน + บันทึกเหตุผล)
+  - Audit log: ค้นหา/กรองการกระทำทั้งหมด (owner ลบได้)
+  - รายงานรายได้: รายวัน/เดือน, เทียบช่วงก่อนหน้า, อัตราการใช้แผง, ส่งออก .xlsx/.csv
+  - จัดการสมาชิก, เปลี่ยนรหัสผ่านบังคับสำหรับบัญชี staff ใหม่
+
+
+===============================================================================
+ 7. FRONTEND: อธิบายโค้ดทีละส่วน
+===============================================================================
+
+-------------------------------------------------------------------------------
+ 7.1 จุดเริ่มต้น
+-------------------------------------------------------------------------------
+ src/main.js
+   สร้างแอป Vue + Pinia และ mount ที่ #app โดย import('./App.vue') แบบ dynamic
+   เพื่อดัก error ตอนเริ่ม (เช่น ไม่มีค่า Firebase) ถ้าเป็น production จะแสดงข้อความ
+   "ระบบขัดข้อง" แบบเรียบ ๆ ไม่เปิดเผยชื่อ key ถ้าเป็น dev โยน error ให้เห็นเต็ม
+
+ src/firebase.js
+   อ่านค่า VITE_FIREBASE_* จาก .env, ตรวจว่าครบ (ไม่ครบ throw error),
+   สร้าง app / db (Firestore) / auth, เปิด Analytics ถ้ารองรับ
+   firebase/config.js แค่ re-export ไฟล์นี้
+
+ src/App.vue  (ไฟล์ประสานงานหลัก)
+   - ไม่ใช้ vue-router: สลับหน้าด้วย marketStore.activeMode
+       'customer' → CustomerStallMap (ผังลูกค้า)
+       'admin'    → StallCanvas (ผังแก้ไข)    [เฉพาะ admin/owner]
+       'members'  → MembersPanel              [admin/owner]
+       'slips'    → SlipReviewPanel           [admin/owner]
+       'audit'    → AuditLogPanel             [admin/owner]
+       'revenue'  → RevenuePanel              [owner เท่านั้น]
+   - รวม modal ทั้งหมดไว้ที่นี่ (แก้แผง แก้วัตถุ โซน ตั้งค่าตลาด ตั้งค่าจอง จอง
+     การจองของฉัน แจ้งเตือน เข้าสู่ระบบ โปรไฟล์ เปลี่ยนรหัสผ่าน)
+   - onMounted: เริ่มฟัง auth, ฟังข้อมูลผังจาก Firestore, ฟังตั้งค่าตลาด,
+     รับผลกลับจาก Google redirect
+   - watch: ฟังแจ้งเตือน/การจองของฉันตาม uid, admin ฟังรายการรอตรวจสลิป,
+     ถูกลดสิทธิ์/ออกจากระบบแล้วเด้งกลับหน้าลูกค้า
+   - เตือนก่อนปิดแท็บถ้า admin มีผังที่ยังไม่บันทึก (beforeunload)
+   - เปิดใบเสร็จเป็นหน้าเต็มผ่าน ?receipt=<bookingId>
+   - บังคับเปลี่ยนรหัสผ่านถ้า mustChangePassword = true
+
+-------------------------------------------------------------------------------
+ 7.2 Stores (Pinia) : src/stores/
+-------------------------------------------------------------------------------
+ authStore.js  (ล็อกอิน/ผู้ใช้)
+   state: currentUser, isAuthenticated, สถานะโหลด Google ฯลฯ
+   getters: isAdmin, isOwner, needsPhone ...
+   actions:
+     initAuth()              ฟัง onAuthStateChanged (แหล่งความจริงเดียวของการล็อกอิน)
+                             โหลดโปรไฟล์ role จาก users/{uid}
+     register()              สมัครอีเมล/รหัสผ่าน
+     login(loginId, pw)      ล็อกอินด้วยอีเมล หรือ username (แปลงด้วย loginId.js)
+     loginWithGoogle()       popup ก่อน ถ้าถูกบล็อก fallback เป็น redirect
+     completeRedirectSignIn()รับผลหลัง redirect
+     ensureUserProfile()     สร้าง users/{uid} ครั้งแรกเท่านั้น role=tenant ไม่ทับของเดิม
+     updateContactInfo()     บันทึกชื่อ/เบอร์โทร
+     sendPasswordReset()     ส่งอีเมลรีเซ็ต (ข้อความเหมือนกันไม่ว่ามีบัญชีหรือไม่)
+     changePassword()        reauthenticate แล้ว updatePassword
+     logout()                ล้างแจ้งเตือนในเครื่องและข้อมูลฟอร์ม
+     switchDemoRole()        สลับบทบาททดสอบ (เฉพาะ dev / VITE_DEMO_MODE=true)
+
+ marketStore.js  (ผังตลาด ใหญ่ที่สุด ~1,000 บรรทัด)
+   state: activeMode, theme (light/dark), ชื่อ/ขนาดตลาด (เมตร), scalePxPerMeter=40,
+          zoom/pan, zones/stalls/layoutObjects (ฉบับ draft ของ admin),
+          published (ฉบับที่ลูกค้าเห็น), selected*, ตัวกรอง, hasUnsavedChanges,
+          initialStallsState/dirtyStallsMap (ติดตามว่าแผงไหนเปลี่ยน)
+   actions:
+     initFirebaseSync()      ฟังผังจาก Firestore แบบ realtime (ผ่าน keepAlive)
+     addStall/updateStall/updateStallPosition/updateStallSize/removeStall
+     addLayoutObject/update/rotate/position/size/remove  (วัตถุประกอบผัง)
+     addZone/updateZone/removeZone
+     pxToM / mToPx           แปลงหน่วยพิกเซล <-> เมตร (snap กริด)
+     saveLayoutToFirestore() บันทึกเฉพาะแผงที่เปลี่ยน + แจ้งผู้เช่าที่ถูกย้ายแผง
+     discardChanges()        ทิ้งการแก้ไข กลับไปฉบับที่เผยแพร่
+     persistToLocal()        cache ลง localStorage
+     showNotification()      toast ข้อความมุมจอ
+   แนวคิดสำคัญ: แยก "draft" (admin กำลังแก้) ออกจาก "published" (ลูกค้าเห็น)
+   ลูกค้าเห็นผังใหม่เมื่อ admin กดบันทึกสำเร็จเท่านั้น และถ้ามี snapshot ใหม่
+   เข้ามาระหว่างที่ admin ยังแก้ไม่เสร็จ จะ merge ไม่ทับงาน (mergeRemoteStalls)
+
+ slotStore.js  (วัน/รอบ + ตั้งค่าตลาด)
+   - ฟัง markets/main-layout.settings → normalizeSettings
+   - เก็บวัน/รอบที่เลือกใน URL (?date=2026-10-17&round=morning)
+   - ฟัง bookingLocks ของช่อง (วัน+รอบ) ที่เลือกแบบ realtime ใช้ระบายสีแผง
+   - ตั้ง timer ครั้งเดียวปลุกตอน lock ใกล้หมดเวลาที่สุดหมดอายุ แล้ววาดสีใหม่
+   - selectDate / setRound / nextDay / goToday / dayDisabled / loadStallLocks
+
+ slipReviewStore.js  (ฝั่ง admin ตรวจสลิป)
+   - start/stop ฟังรายการ pending/needs_slip/cancel_requested ฯลฯ
+   - loadSlip + prefetch รูปสลิป, duplicatesOf (สลิปซ้ำ)
+   - decide (อนุมัติ/ปฏิเสธ/ขอสลิปใหม่), decideCancel, recordRefund,
+     deleteBooking, removeDecided, sweepExpired (ตั้ง "หมดเวลา"), sweepSlips (ลบรูปเก่า)
+
+ myBookingsStore.js     ฟังการจองของตัวเอง (แบ่งหน้า loadMore), sweepExpired
+ notificationStore.js   แจ้งเตือน: ฟังตาม uid, markAsRead, markAllAsRead, delete,
+                        ส่งแจ้งเตือนแบบกลุ่มเมื่อผังเปลี่ยน (sendBatchLayoutNotifications)
+ receiptStore.js        เปิด/ปิดหน้าใบเสร็จ sync กับ ?receipt= ใน URL
+ revenueStore.js        ช่วงวันที่ (preset/custom), load รายงาน, อัตราใช้แผง,
+                        exportFile('xlsx'|'csv', includePhone)
+ auditLogStore.js       โหลด/โหลดเพิ่ม/กรอง/ลบ audit log
+
+-------------------------------------------------------------------------------
+ 7.3 Services (ชั้นคุยกับ Firestore) : src/services/
+-------------------------------------------------------------------------------
+ firebaseService.js (1,259 บรรทัด) — หัวใจของ logic ฝั่งข้อมูล ทุกฟังก์ชันที่แก้หลาย
+ เอกสารใช้ transaction/batch และเขียน audit log ไปพร้อมกัน
+   subscribeToMarketLayout()   ฟังผัง + แผงรายแผงแล้วรวมเป็นก้อนเดียว
+   saveMarketLayoutToFirestore() บันทึกเฉพาะแผงที่เปลี่ยน (upserts/deletes)
+   bookStallWithTransaction()  จองแบบเดิม (ไม่มีวัน) — คงไว้เพื่อข้อมูลเก่า
+   bookStallSlots()            จองหลายวัน/รอบ: booking + lock ทุก slot + สลิป + audit
+                               ใน transaction เดียว ถ้ามี slot ถูกจองไปก่อนล้มทั้งหมด
+   submitHeldSlip()            แนบสลิปครั้งแรกหลังกันแผง awaiting_slip → pending
+   resubmitSlip()              ส่งสลิปใหม่หลังถูกขอ
+   cancelMyBooking()           ผู้เช่ายกเลิกก่อนอนุมัติ + ปล่อยแผง/lock
+   decideBooking()             admin อนุมัติ/ปฏิเสธ/ขอสลิปใหม่ + สถานะแผง + แจ้งเตือน
+                               (ถ้าอีกคนตัดสินไปแล้วโยน 'already-decided')
+   expireBookings()            ตั้งสถานะ "หมดเวลา" ให้รายการที่กันแผงเกินเวลา
+   requestCancelBooking()      ผู้เช่าขอยกเลิกรายการที่อนุมัติแล้ว (+บัญชีรับเงินคืน)
+   withdrawCancelRequest()     ถอนคำขอยกเลิก
+   decideCancellation()        admin: approve / deny / direct cancel + ยอดคืนตามนโยบาย
+   recordRefund()              บันทึกการคืนเงินจริง (+สลิปคืนเงิน)
+   issueReceiptNumber()        ออกเลขใบเสร็จย้อนหลัง (counter รายปี)
+   deleteBookingPermanently()  ลบถาวร: booking+สลิป+ข้อมูลคืนเงิน+lock+audit
+   deleteDecidedBookings()     ลบรายการที่จบแล้วเป็นชุด
+   purgeExpiredSlips()         ลบรูปสลิปที่อนุมัติแล้วเกิน 1 วัน (SLIP_RETENTION_MS)
+   fetchBookingsForReport()    ดึงข้อมูลทำรายงานรายได้
+   subscribeBookingsByStatus / subscribeMyBookings / subscribeLocksForSlot ฯลฯ
+   backfillPublicBookingInfo() เติมข้อมูลสาธารณะให้แผงของข้อมูลเก่า
+
+ auditLog.js       addAuditToBatch() ใส่ audit log เข้า batch/transaction เดียวกับ
+                   การกระทำ (log ต้องไปพร้อมกันหรือไม่ไปเลย), fetchAuditPage() แบ่งหน้า,
+                   deleteAuditLogs()
+ marketSettings.js subscribeMarketSettings(), saveMarketSettings() + audit
+ slipStorage.js    เก็บรูปสลิปเป็น data URL ในคอลเลกชัน bookingSlips (แผน Spark ฟรี)
+                   เตรียมช่องให้สลับเป็น Firebase Storage ภายหลัง
+
+-------------------------------------------------------------------------------
+ 7.4 Utils (ฟังก์ชันล้วน ทดสอบได้) : src/utils/
+-------------------------------------------------------------------------------
+ date.js            วันที่เขตเวลาไทย: todayBangkok, toDateKey, fromDateKey, addDays,
+                    diffDays, dayOfWeek, formatThaiDate/Time/DateTime
+ calendarGrid.js    สร้างตารางปฏิทินรายเดือน (ภาษาไทย พ.ศ.) ไม่พึ่ง Date ของเครื่อง
+ marketCalendar.js  กติกาวัน/รอบ: normalizeSettings, slotKey 'YYYY-MM-DD_รอบ',
+                    isMarketOpen, canBookSlot/Date (ตรวจเวลาปิดรับ),
+                    nextBookableDate, formatSlotLabel/Summary
+ holdTimer.js       คำนวณเวลาหมดอายุกันแผง, นับถอยหลัง, ระดับสีเตือน
+ serverClock.js     ชดเชยความต่างเวลาเครื่องกับ server ให้นับถอยหลังตรงกับ rules
+ compressImage.js   บีบรูปสลิปด้วย canvas ให้ไม่เกิน ~700k ตัวอักษร, hash ไฟล์
+ refundPolicy.js    suggestRefund(): คิดยอดคืนจากนโยบาย (คืนเต็ม X วันก่อน, คืนบางส่วน %,
+                    ไม่คืนในวันขาย) และบอกช่องที่ปล่อยได้
+ revenue.js         computeRevenue(): รายได้ตามวันขาย, หักคืนเงินตามวันที่คืน,
+                    capacitySlots, percentChange, groupMonthly
+ reportSheets.js    แปลงรายงานเป็นแถวของแต่ละ sheet (ไม่ใส่เบอร์โทรเว้นแต่เลือก)
+ xlsx.js            ตัวเขียน .xlsx เอง (ZIP แบบ store + Open XML) และ toCsv
+ download.js        ดาวน์โหลดไฟล์ (สำรองด้วย navigator.share)
+ receipt.js         เลขที่ใบเสร็จ, bahtText() แปลงตัวเลขเป็นตัวหนังสือไทย
+ bookingDelete.js   กติกาลบการจอง + รหัสยืนยัน + snapshot สำหรับ audit
+ stallSync.js       buildStallWrites(), mergeRemoteStalls(), toPublicBookedBy()
+ publishedLayout.js แยก draft/published ของผัง
+ stallLabel.js      เลือกแสดงป้ายแผงเต็ม/ย่อ ตามขนาด
+ keepAlive.js       ทำให้ onSnapshot ฟื้นเองด้วย exponential backoff 2s→30s
+ auditDiff.js       เทียบก่อน/หลังเฉพาะฟิลด์ที่เปลี่ยน
+ authErrors.js      แปลง error Firebase Auth เป็นภาษาไทย
+ loginId.js         username → อีเมลภายใน staff
+ keyboard.js        กันคีย์ลัดผังเมื่อพิมพ์/มี modal
+ icons.js           map ชื่อไอคอน → component lucide
+
+ composables/: useBreakpoint (phone/tablet/desktop/touch), useMediaQuery,
+               useNow (เวลา server แบบ reactive สำหรับนับถอยหลัง)
+ constants/:   auditActions.js (ชื่อ action ต้องตรงกับ rules), booking.js
+
+-------------------------------------------------------------------------------
+ 7.5 Components
+-------------------------------------------------------------------------------
+ layout/AppHeader, HeaderNavTabs, UserMenu
+     แถบบน: ชื่อตลาด + สถานะ realtime, แท็บสลับโหมด (ย่อเป็นไอคอน/เมนู "..." อัตโนมัติ
+     เมื่อจอแคบ), เมนูผู้ใช้, สลับ dark mode, กระดิ่งแจ้งเตือน, ป้ายจำนวนสลิปรอตรวจ
+ builder/BuilderPageBar        แถบหัวหน้า Admin: สถิติ, ปุ่มบันทึก/ทิ้ง, ปุ่มเปิด modal ตั้งค่า
+
+ canvas/ (แถบเครื่องมือผัง)
+     CanvasToolbar     เครื่องมือ 3 กลุ่ม สร้าง | มุมมอง | ผัง, ย่อปุ่มตามความกว้าง
+                       (ResizeObserver), มือถือเป็นแถบล่าง, คีย์ลัด N/O/+/−/0/G/Space
+     AddObjectMenu     เมนูเพิ่มวัตถุ ค้นหา ไทย/อังกฤษ + "ใช้ล่าสุด"
+     SnapOptions, ToolbarButton, ToolbarMenu (bottom sheet บนมือถือ), ToolbarTooltip
+
+ Admin/
+     StallCanvas       ผังแก้ไข: ลากแผง/วัตถุ ปรับขนาด หมุน snap กริด pan/zoom
+                       (เมาส์/สัมผัส/ลูกศร/Delete)
+     StallEditorModal  แก้ข้อมูลแผง (เลขแผง โซน ขนาด ราคา หมายเหตุ ปิดใช้งาน)
+     ObjectEditorModal แก้วัตถุประกอบผัง
+     ZoneManagerModal  เพิ่ม/แก้/ลบโซน (สี ราคา)
+     MarketSettingsModal ชื่อและขนาดตลาด กริด
+     BookingSettingsModal ตั้งค่าวันเปิด รอบ เวลาปิดรับ เวลากันแผง นโยบายคืนเงิน
+     SlipReviewPanel   รายการจองรอตรวจ + รายละเอียด
+     slip/SlipReviewDetail   รายละเอียดการจอง + ปุ่มตัดสิน
+     slip/SlipImageViewer    ดูรูปสลิป ลาก/pinch zoom
+     slip/AdminCancelPanel   จัดการคำขอยกเลิก/คืนเงิน/ใบเสร็จ
+     slip/RefundFields, BookingAuditHistory, DeleteBookingDialog (ลบ 2 ขั้น)
+     RevenuePanel      รายงานรายได้ + ส่งออก
+     AuditLogPanel     บันทึกการทำงาน กรอง/ค้นหา/ลบ (owner)
+     MembersPanel      รายชื่อสมาชิกและสิทธิ์
+
+ Customer/
+     CustomerStallMap  ผังฝั่งลูกค้า กรอง/ค้นหา คำนวณสถานะแผงตามวัน/รอบ
+     DayRoundBar       แถบเลือกวัน/รอบ
+     BookingModal      ฟอร์มจอง: เลือกวัน/รอบ ข้อมูลผู้จอง แนบสลิป PromptPay
+                       (จำกัดกันแผงพร้อมกันได้ไม่เกิน 2 รายการ MAX_HOLDS)
+     MyBookingsModal   การจองของฉัน (แท็บ, timeline, ส่งสลิป, ยกเลิก, ใบเสร็จ)
+     ReceiptView       ใบเสร็จเต็มหน้า พิมพ์ได้
+
+ booking/BookingCalendar     ปฏิทินเลือกวัน (คีย์บอร์ดได้ เลือกเป็นช่วงได้)
+ Auth/  AuthModal (เข้าสู่ระบบ/สมัคร/ลืมรหัส/Google), CompleteProfileModal (ขอเบอร์),
+        ChangePasswordModal, NotificationCenter, DemoRoleSwitcher (dev เท่านั้น)
+ shared/StallView   ตัววาดแผงเดียวใช้ร่วมทั้งหน้าลูกค้าและหน้าแก้ไข
+ ui/BaseModal       modal พื้นฐาน (บนมือถือเป็น bottom sheet ลากปิดได้)
+
+
+===============================================================================
+ 8. BACKEND (Firebase)
+===============================================================================
+
+โปรเจกต์นี้ไม่มี server เขียนเอง backend = Firebase ล้วน
+
+ 8.1 Authentication
+   - Email/Password และ Google
+   - ห้าม anonymous (rules ตรวจ sign_in_provider != 'anonymous')
+   - บัญชี staff: ล็อกอินด้วย username → แปลงเป็นอีเมลภายใน
+
+ 8.2 Cloud Firestore
+   - เก็บทุกอย่าง realtime ผ่าน onSnapshot (ครอบด้วย keepAlive ให้ฟื้นเอง)
+   - ใช้ transaction/batch ทุกจุดที่เกี่ยวหลายเอกสาร
+
+ 8.3 Firestore Security Rules  (firestore.rules)  ** ส่วนสำคัญที่สุดของ backend **
+   Rules ทำหน้าที่แทน server: เป็นผู้ตัดสินสิทธิ์และ "เครื่องสถานะ" ของการจอง
+   ฟังก์ชันช่วย: isSignedIn, isNotAnonymous, userRole (อ่าน role จาก users/{uid}
+   ไม่เชื่อค่าจาก client), isAdmin, isOwner
+   กติกาต่อ collection:
+     markets/{id}           อ่านสาธารณะ / แก้เฉพาะ admin / ตรวจ settings (รอบไม่เกิน 6)
+     markets/{id}/stalls/*  ผู้เช่าเปลี่ยนได้แค่ available→pending ของตัวเอง
+     bookings/{id}          อ่านเฉพาะเจ้าของ+admin; update ได้เฉพาะ "การเปลี่ยนสถานะ
+                            ที่ถูกต้อง" (isValidDecision, isTenantCancel, isTenantPaySlip,
+                            isExpireBooking, isAdminCancelDecision, isRefundRecord,
+                            isReceiptIssue ฯลฯ) ห้ามแก้ยอด/ผู้เช่า/สลิป
+     bookingLocks/{id}      lock กันจองซ้ำรายวัน/รอบ (id = stallId + slotKey)
+     bookingSlips/{id}      รูปสลิป (แยกออกจาก booking ให้รายการเบา)
+     auditLogs/{id}         สร้างได้ต่อเมื่อไปพร้อมการกระทำจริง (auditLinked) แก้ไม่ได้
+     counters/receipts_YYYY เลขใบเสร็จ เพิ่มได้ทีละ 1 เท่านั้น ลบไม่ได้
+     refundAccounts / refundSlips   บัญชีรับเงินคืน / สลิปคืนเงิน (แยกจาก booking)
+     users/{uid}            อ่านของตัวเอง/admin; สร้างเป็น tenant เท่านั้น; แก้ role ไม่ได้
+     notifications/{id}     อ่าน/ลบของตัวเอง; ผู้เช่าแก้ได้เฉพาะ isRead; admin สร้าง
+   จุดที่ซับซ้อนที่สุด:
+     - หมดเวลากันแผง: ไม่มี server จึงใช้ request.time เทียบ holdStartedAt+holdMinutes
+       และบังคับ holdMinutes ให้ตรงกับตั้งค่าตลาด (กันผู้เช่าตั้งเวลายาวเอง)
+     - ใช้ getAfter() ตรวจว่า booking กับสถานะแผง/lock เปลี่ยนไปพร้อมกัน
+     - ลบการจองต้องมี audit log id ตายตัวไปพร้อมกัน (auditDeleteOk)
+
+ 8.4 Indexes (firestore.indexes.json) 8 ตัว
+   bookings(tenantId, createdAt) , bookings(status, createdAt) ,
+   notifications(tenantId, createdAt) , auditLogs(bookingId, at) , auditLogs(action, at) ,
+   bookingLocks(stallId, date) , bookingLocks(roundId, date)
+
+ 8.5 Hosting
+   firebase.json: เสิร์ฟโฟลเดอร์ dist/ และ rewrite ทุกเส้นทางไป /index.html (SPA)
+   emulator: Firestore พอร์ต 8080 (ใช้ทดสอบ rules)
+
+ 8.6 สคริปต์ (scripts/)
+   seed-staff.mjs         สร้างบัญชี owner/admin ด้วย firebase-admin (ล็อกอินด้วย username)
+   delete-all-members.mjs ลบสมาชิกทั้งหมด (ใช้ตอนเตรียมข้อมูลทดสอบ)
+
+
+===============================================================================
+ 9. โครงสร้างข้อมูล (Firestore Collections)
+===============================================================================
+
+ markets/main-layout
+     name, zones[], layoutObjects[], dimensions, settings{ openWeekdays,
+     closedDates, extraOpenDates, maxAdvanceDays, bookingCutoffTime, maxSlotsPerBooking,
+     rounds, paymentHoldMinutes, resubmitHours, cancelPolicy, receipt }
+   └ stalls/{stallId}   stallNo, zoneId, x, y, width, height, price, status,
+                        bookedBy{ tenantId, bookingId, goodsType, bookedAt }
+ bookings/{id}          tenantId, stallId, slots[] ('2026-10-17_all'), ยอดเงิน,
+                        status, ข้อมูลผู้จอง, holdStartedAt/holdMinutes, refund,
+                        receiptNo, createdAt ...
+ bookingLocks/{stallId_slotKey}  stallId, date, roundId, bookingId, status, holdStartedAt
+ bookingSlips/{bookingId}        dataUrl (รูปบีบอัด), mime, bytes, hash, purgeAfter
+ refundAccounts/{bookingId}      ชื่อบัญชี ธนาคาร เลขบัญชี
+ refundSlips/{bookingId}         สลิปคืนเงิน
+ counters/receipts_2569          { year, next }
+ auditLogs/{id}                  actor, action, targetType/Id, before, after, reason, at
+ users/{uid}                     displayName, phone, role, provider, mustChangePassword
+ notifications/{id}              tenantId, title, message, type, isRead, createdAt
+
+ ข้อมูลส่วนบุคคล (ชื่อ เบอร์) อยู่ใน bookings/users ซึ่งอ่านได้เฉพาะเจ้าของ+admin
+ ส่วนแผงที่อ่านสาธารณะเก็บเฉพาะชื่อร้าน/ประเภทสินค้า ไม่มีชื่อจริงหรือเบอร์
+
+
+===============================================================================
+ 10. ขั้นตอนการจอง และสถานะ
+===============================================================================
+
+ Flow หลัก
+  1) ผู้เช่าล็อกอิน เลือกวัน/รอบ แล้วคลิกแผง
+  2) BookingModal ตรวจกติกา (วันเปิด, เวลาปิดรับ, จำนวนสูงสุด) ที่ client
+  3) bookStallSlots(): transaction สร้าง booking + lock ทุก slot (+สลิปถ้าแนบมาแล้ว)
+     ถ้ามี slot ถูกจองก่อน → ล้มทั้งหมด ไม่มีข้อมูลค้าง
+  4) ถ้ายังไม่แนบสลิป: สถานะ awaiting_slip กันแผงตามเวลา (ค่าเริ่มต้น 30 นาที)
+     นับถอยหลังในหน้า "การจองของฉัน"; หมดเวลา → แผงว่าง (rules เป็นผู้ตัดสิน)
+  5) แนบสลิป → pending → admin ตรวจ
+  6) admin: approved (แผงเป็น booked + ออกเลขใบเสร็จ + แจ้งเตือน)
+            rejected (ปล่อยแผง) หรือ needs_slip (ขอสลิปใหม่ภายในเวลาที่กำหนด)
+  7) ภายหลัง: ผู้เช่าขอยกเลิก (cancel_requested) → admin approve/deny
+     → cancelled + บันทึกคืนเงินตามนโยบาย
+
+ สถานะของการจอง
+   awaiting_slip → pending → approved → cancel_requested → cancelled
+                      │         └──────────────(deny)──────┘ กลับ approved
+                      ├→ needs_slip → pending (ส่งใหม่) / rejected / expired
+                      ├→ rejected
+                      └→ cancelled (ผู้เช่ายกเลิกก่อนอนุมัติ)
+   expired = หมดเวลากันแผง/ส่งสลิป
+   การจองเก่าที่ไม่มี status ถือเป็น approved
+
+ ทุกการเปลี่ยนสถานะที่สำคัญเขียน audit log ใน transaction เดียวกัน
+
+
+===============================================================================
+ 11. ความปลอดภัย
+===============================================================================
+  - Rules อ่าน role จากฐานข้อมูล ไม่เชื่อ client; สมัครเองได้แค่ tenant
+  - ไม่เก็บ key/ความลับใน git: .env อยู่ใน .gitignore มี .env.example แทน
+  - ห้าม anonymous; ปุ่มสลับบทบาททดสอบปิดใน production (เว้นแต่ VITE_DEMO_MODE=true)
+  - ข้อมูลส่วนบุคคลไม่อยู่ในเอกสารที่อ่านสาธารณะ
+  - รูปสลิปแยกเอกสาร จำกัดขนาด/ชนิดไฟล์ทั้งฝั่ง client และ rules; ลบรูปที่อนุมัติแล้วเกิน 1 วัน
+  - Audit log แก้ไม่ได้ ลบได้เฉพาะ owner
+  - ป้องกันจองซ้ำด้วย lock + transaction; กันสลิปซ้ำด้วย hash
+  - Build หยุดถ้าไม่มี config; production ไม่โชว์รายละเอียด error
+
+
+===============================================================================
+ 12. การทดสอบ
+===============================================================================
+ Unit test (node --test)  ผ่านทั้งหมด 129 ข้อ (ตรวจเมื่อ 2026-10-15)
+   date, stallSync, loginId, compressImage, keepAlive, stallLabel, publishedLayout,
+   auditDiff, marketCalendar, calendarGrid, missingSystems (รายได้/คืนเงิน/ใบเสร็จ),
+   bookingDelete
+ Rules test  tests/firestore.rules.test.mjs และ firestore.rules.missing.test.mjs
+   (~1,650 บรรทัด) รันกับ Firestore emulator ด้วย @firebase/rules-unit-testing
+   ตรวจว่า rules อนุญาต/ปฏิเสธถูกต้องตามบทบาทและสถานะ
+
+ คำสั่ง
+   npm run test:unit      รัน unit test
+   npm run test:rules     รัน rules test (ต้องมี firebase-tools + Java สำหรับ emulator)
+
+
+===============================================================================
+ 13. วิธีติดตั้ง รัน และ deploy
+===============================================================================
+  1. npm install
+  2. คัดลอก .env.example เป็น .env แล้วใส่ค่า Firebase จาก Console
+  3. npm run dev            (เปิดเครื่อง dev)
+  4. npm run build         (สร้าง dist/ — หยุดถ้า .env ไม่ครบ)
+  5. npm run deploy        (build + deploy hosting, rules, indexes)
+     หรือ deploy:hosting / deploy:rules แยกกัน
+  6. สร้างบัญชี owner/admin: npm run seed:staff (ตั้ง GOOGLE_APPLICATION_CREDENTIALS เป็นไฟล์ service account ก่อน)
+
+ ตัวแปร .env
+   VITE_FIREBASE_*          ค่าโปรเจกต์ Firebase
+   VITE_DEMO_MODE           เปิดปุ่มสลับบทบาททดสอบ (ห้ามเปิดในระบบจริง)
+   VITE_PROMPTPAY_NUMBER    เบอร์ PromptPay ที่โชว์ตอนจอง
+   VITE_STAFF_EMAIL_DOMAIN  โดเมนอีเมลภายในของบัญชี staff
+
+ หมายเหตุ: โฟลเดอร์นี้ "ไม่มีไฟล์ .env" (ข้อมูลลับ) ผู้รับต้องสร้างเองก่อนรัน
+
+
+===============================================================================
+ 14. ข้อจำกัด / สิ่งที่ควรพัฒนาต่อ
+===============================================================================
+  - สลิปเก็บเป็น data URL ใน Firestore (ใช้แผน Spark ฟรี) ถ้าอัปเกรด Blaze ควรย้ายไป
+    Firebase Storage (slipStorage.js เตรียมจุดสลับไว้แล้ว)
+  - ไม่มี server จึงตรวจ "ปฏิทินตลาด" (วันเปิด/เวลาปิดรับ) ที่ client เท่านั้น
+    rules ตรวจไม่ได้ (ผู้ที่แก้ client สามารถข้ามได้) และสถานะ "หมดเวลา" ถูกตั้งเมื่อมี
+    admin เปิดหน้าเว็บ (ความถูกต้องของแผงยังถูก rules ตัดสินเสมอ)
+  - ยังไม่มีการชำระเงินอัตโนมัติ ใช้การโอน PromptPay + ตรวจสลิปด้วยคน
+  - มีโค้ดชุดเก่าที่ไม่ได้ใช้แล้ว: src/router/, src/views/ (HomeView, LoginView),
+    src/components/Navbar.vue ปัจจุบัน App.vue สลับหน้าด้วย activeMode ไม่ใช้ router
+    (สามารถลบได้ภายหลัง)
+  - bundle ขนาดใหญ่ (คำเตือน > 500 kB) ควรแยก chunk/lazy load เพิ่มเติม
+  - ขนาดไฟล์บางไฟล์ใหญ่ (marketStore, firebaseService) ควรแยกเป็นโมดูลย่อย
+  - รายการงานที่ค้างจากการ code review ดูใน docs/CODE_REVIEW.txt
+
+
+===============================================================================
+ 15. (ภาคผนวก) ไฟล์ในโฟลเดอร์ส่งงานนี้
+===============================================================================
+  สรุปโปรเจกต์_และอธิบายโค้ด.txt    เอกสารนี้
+  src/            โค้ด Frontend ทั้งหมด (Vue)
+  tests/          unit test + rules test
+  scripts/        สคริปต์ seed/ลบสมาชิก
+  docs/           เอกสารประกอบ (code review, คู่มือ deploy, สรุปงานรายวัน)
+  prompt/         prompt ที่ใช้สั่งงานระหว่างพัฒนา
+  firestore.rules / firestore.indexes.json / firebase.json / .firebaserc   backend config
+  package.json / package-lock.json / vite.config.js / tailwind.config.js / postcss.config.js
+  index.html / .env.example / .gitignore / README.md
+
+  ไม่รวม: node_modules (ติดตั้งใหม่ด้วย npm install), dist (build ใหม่ได้),
+          .env (ข้อมูลลับ), .git, โฟลเดอร์ .agents/.claude (เครื่องมือ AI)
+
+===============================================================================
+ จบเอกสาร
+===============================================================================

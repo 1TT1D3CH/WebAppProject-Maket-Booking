@@ -306,7 +306,7 @@ service cloud.firestore {
                && (r.status == 'cancel_requested'
                    || (d.statusReason is string && d.statusReason.size() >= 1 && d.statusReason.size() <= 300))
                && (!('releasedSlots' in d)
-                   || ('slots' in r && d.releasedSlots is list && d.releasedSlots.size() <= 7 && r.slots.hasAll(d.releasedSlots)))));
+                   || ('slots' in r && d.releasedSlots is list && d.releasedSlots.size() <= 365 && r.slots.hasAll(d.releasedSlots)))));
     }
 
     // admin/owner บันทึกว่าคืนเงินแล้ว: refund.status pending -> refunded (ยอดไม่เกินยอดที่จ่าย)
@@ -387,7 +387,7 @@ service cloud.firestore {
       let d = request.resource.data;
       let stall = get(/databases/$(database)/documents/markets/main-layout/stalls/$(d.stallId)).data;
       return d.slots is list
-        && d.slots.size() >= 1 && d.slots.size() <= 7
+        && d.slots.size() >= 1 && d.slots.size() <= 365
         && d.slots.toSet().size() == d.slots.size()
         && stall.status == 'available'
         && d.pricePerSlot == stall.price
@@ -409,9 +409,17 @@ service cloud.firestore {
                && payHoldMinutesOk(d.holdMinutes)
                && !('slipHash' in d) && !('slipUploadedAt' in d)))
         && auditLinked(bookingId, ['booking.create'])
-        && slotLockOk(d, bookingId, 0) && slotLockOk(d, bookingId, 1) && slotLockOk(d, bookingId, 2)
-        && slotLockOk(d, bookingId, 3) && slotLockOk(d, bookingId, 4) && slotLockOk(d, bookingId, 5)
-        && slotLockOk(d, bookingId, 6);
+        // เพดาน rules: อ่านเอกสารได้ไม่เกิน 10 ครั้งต่อคำสั่ง และ 20 เอกสารต่อ batch จึงตรวจ lock ตามขนาดการจอง:
+        //  1-7 ช่อง   : ตรวจ lock ทุกช่องจากฝั่ง booking
+        //  8-14 ช่อง  : ตรวจ lock ช่องสุดท้าย + lock แต่ละช่องตรวจช่องก่อนหน้าเป็นลูกโซ่ (lockChainOk) ครบทุกช่อง
+        //  15-365 ช่อง: ตรวจ lock ช่องแรกกับช่องสุดท้ายเท่านั้น (ตรวจครบไม่ได้ในจำนวนอ่านที่จำกัด)
+        //               แอปแอดมินจึงตรวจ lock ครบทุกช่องอีกครั้งก่อนอนุมัติ (decideBooking)
+        && (d.slots.size() <= 7
+            ? (slotLockOk(d, bookingId, 0) && slotLockOk(d, bookingId, 1) && slotLockOk(d, bookingId, 2)
+               && slotLockOk(d, bookingId, 3) && slotLockOk(d, bookingId, 4) && slotLockOk(d, bookingId, 5)
+               && slotLockOk(d, bookingId, 6))
+            : (slotLockOk(d, bookingId, d.slots.size() - 1)
+               && (d.slots.size() <= 14 || slotLockOk(d, bookingId, 0))));
     }
 
     // ─── Bookings (Customer Transaction History) ─────────────────────────────
@@ -453,7 +461,7 @@ service cloud.firestore {
     function lockShapeOk(lockId, l) {
       let bk = getAfter(/databases/$(database)/documents/bookings/$(l.bookingId)).data;
       return l.keys().hasOnly(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId',
-             'status', 'shopName', 'goodsType', 'createdAt', 'holdStartedAt', 'holdMinutes'])
+             'status', 'shopName', 'goodsType', 'createdAt', 'holdStartedAt', 'holdMinutes', 'seq'])
         && l.keys().hasAll(['marketId', 'stallId', 'date', 'roundId', 'slotKey', 'bookingId', 'status', 'createdAt'])
         && l.status in ['pending', 'awaiting_slip']
         && l.status == bk.status
@@ -470,7 +478,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/markets/main-layout/stalls/$(l.stallId)).data.status == 'available'
         && bk.tenantId == request.auth.uid
         && bk.stallId == l.stallId
-        && l.slotKey in bk.slots;
+        && l.slotKey in bk.slots
+        // ลูกโซ่: lock ลำดับที่ seq ต้องตรงกับ bk.slots[seq] และ lock ลำดับก่อนหน้าต้องมีอยู่ (ของการจองเดียวกัน)
+        // การจองไม่เกิน 7 ช่องไม่ต้องใส่ seq (booking ตรวจ lock ทุกช่องเอง)
+        && ('seq' in l ? (bk.slots.size() <= 14 && lockChainOk(l, bk)) : (bk.slots.size() <= 7 || bk.slots.size() > 14));
+    }
+
+    function lockChainOk(l, bk) {
+      return l.seq is int && l.seq >= 0 && l.seq < bk.slots.size()
+        && bk.slots[l.seq] == l.slotKey
+        && (l.seq == 0
+            || getAfter(slotLockPath(l.stallId, bk.slots[l.seq - 1])).data.bookingId == l.bookingId);
     }
 
     // ผู้เช่าส่งสลิปแล้ว: lock ของตัวเองจาก awaiting_slip / needs_slip กลับเป็น pending (พร้อม booking -> pending)

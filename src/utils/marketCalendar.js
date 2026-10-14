@@ -1,9 +1,11 @@
 // ปฏิทินตลาด: วัน + รอบ = "slot" ที่จองได้ ใช้ได้ทั้งฝั่งหน้าเว็บและ unit test (ไม่พึ่ง Firebase)
 // วันที่เป็น 'YYYY-MM-DD' เวลาไทยเสมอ slotKey = 'YYYY-MM-DD_roundId' เช่น '2026-10-17_all'
 import { addDays, diffDays, dayOfWeek, isDateKey, todayBangkok, formatThaiDate } from './date.js'
+import { DEFAULT_MAX_ADVANCE_DAYS, MAX_ADVANCE_DAYS_LIMIT } from '../constants/booking.js'
 
 export const DEFAULT_ROUND_ID = 'all'
-export const MAX_SLOTS_LIMIT = 7 // เพดานของ rules (นับการอ่านเอกสารต่อคำสั่งเขียน)
+export const MAX_SLOTS_LIMIT = 365 // เพดานของ rules (firestore.rules: d.slots.size() <= 365) = ช่วงจองล่วงหน้าสูงสุด 1 ปี; batch เขียนได้ ≤ 500 รายการ
+export const DEFAULT_SLOTS_PER_BOOKING = 7 // ค่าเริ่มต้นเดิม admin ปรับเพิ่มได้ถึง MAX_SLOTS_LIMIT
 export const MAX_ROUNDS = 6
 const ROUND_ID_RE = /^[a-z0-9]{1,20}$/
 const SLOT_KEY_RE = /^(\d{4}-\d{2}-\d{2})_([a-z0-9]{1,20})$/
@@ -14,9 +16,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   openWeekdays: [0, 1, 2, 3, 4, 5, 6], // 0 = อาทิตย์
   closedDates: [],
   extraOpenDates: [],
-  maxAdvanceDays: 30,
+  maxAdvanceDays: DEFAULT_MAX_ADVANCE_DAYS,
   bookingCutoffTime: '', // 'HH:MM' ของวันก่อนวันขาย ว่าง = ไม่จำกัด
-  maxSlotsPerBooking: MAX_SLOTS_LIMIT,
+  maxSlotsPerBooking: DEFAULT_SLOTS_PER_BOOKING,
   rounds: [], // ว่าง = วันละรอบเดียว (id 'all')
   paymentHoldMinutes: 30, // กันแผงรอสลิปกี่นาที (10-120)
   resubmitHours: 24, // ให้เวลาส่งสลิปใหม่กี่ชั่วโมง (1-72)
@@ -53,9 +55,9 @@ export function normalizeSettings(raw) {
     openWeekdays: weekdays ?? [...DEFAULT_SETTINGS.openWeekdays],
     closedDates: uniqueDates(s.closedDates),
     extraOpenDates: uniqueDates(s.extraOpenDates),
-    maxAdvanceDays: clampInt(s.maxAdvanceDays, 1, 365, DEFAULT_SETTINGS.maxAdvanceDays),
+    maxAdvanceDays: clampInt(s.maxAdvanceDays, 1, MAX_ADVANCE_DAYS_LIMIT, DEFAULT_SETTINGS.maxAdvanceDays),
     bookingCutoffTime: TIME_RE.test(s.bookingCutoffTime) ? s.bookingCutoffTime : '',
-    maxSlotsPerBooking: clampInt(s.maxSlotsPerBooking, 1, MAX_SLOTS_LIMIT, MAX_SLOTS_LIMIT),
+    maxSlotsPerBooking: clampInt(s.maxSlotsPerBooking, 1, MAX_SLOTS_LIMIT, DEFAULT_SLOTS_PER_BOOKING),
     rounds,
     paymentHoldMinutes: clampInt(s.paymentHoldMinutes, 10, 120, DEFAULT_SETTINGS.paymentHoldMinutes),
     resubmitHours: clampInt(s.resubmitHours, 1, 72, DEFAULT_SETTINGS.resubmitHours),
@@ -140,6 +142,39 @@ export function canBookSlot(settings, key, now = new Date()) {
     return { ok: false, reason: 'ปิดรับจองรอบนี้แล้ว' }
   }
   return { ok: true }
+}
+
+/** วันสุดท้ายที่จองล่วงหน้าได้ (วันนี้ตามเวลาไทย + maxAdvanceDays) */
+export function maxBookableDate(settings, now = new Date()) {
+  return addDays(todayBangkok(now), normalizeSettings(settings).maxAdvanceDays)
+}
+
+/**
+ * จองวันนี้ได้ไหม (มีอย่างน้อย 1 รอบที่จองได้) ใช้กับปฏิทิน
+ * ไม่ได้ -> คืนเหตุผลของรอบแรก (เหตุผลระดับวัน เช่น ตลาดปิด/ผ่านมาแล้ว/เกินกำหนด เหมือนกันทุกรอบ)
+ */
+export function canBookDate(settings, date, now = new Date()) {
+  const rounds = getRounds(settings)
+  let first = null
+  for (const r of rounds) {
+    const res = canBookSlot(settings, slotKey(date, r.id), now)
+    if (res.ok) return res
+    first = first || res
+  }
+  return first || { ok: false, reason: 'จองไม่ได้' }
+}
+
+/** วันเปิดขายที่จองได้ถัดไป (step = 1 หรือ -1) จาก fromDate ภายในช่วงจอง ไม่เจอคืน null */
+export function nextBookableDate(settings, fromDate, step = 1, now = new Date()) {
+  const s = normalizeSettings(settings)
+  const today = todayBangkok(now)
+  const last = addDays(today, s.maxAdvanceDays)
+  let d = addDays(fromDate, step)
+  while (d >= today && d <= last) {
+    if (canBookDate(s, d, now).ok) return d
+    d = addDays(d, step)
+  }
+  return null
 }
 
 const roundLabel = (settings, roundId) => getRounds(settings).find(r => r.id === roundId)?.label || roundId

@@ -59,23 +59,55 @@
           <p v-if="locksLoading" class="text-xs text-slate-500">กำลังตรวจวันที่ว่าง...</p>
           <p v-else-if="locksError" class="text-xs text-rose-600">{{ locksError }}
             <button type="button" class="underline font-semibold" @click="loadLocks">ลองใหม่</button></p>
-          <p v-if="!bookableDates.length" class="text-xs text-slate-500">ตอนนี้ยังไม่มีวันเปิดรับจอง</p>
-          <div class="max-h-56 overflow-y-auto space-y-1.5 pr-1">
-            <div v-for="d in bookableDates" :key="d" class="flex items-center gap-2">
-              <span class="w-28 shrink-0 text-xs font-semibold text-slate-700">{{ formatThaiDate(d) }}</span>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="r in slotStore.rounds" :key="r.id" type="button"
-                  :disabled="!slotState(d, r.id).free"
-                  class="min-h-[44px] px-3 rounded-xl text-xs font-semibold border transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  :class="isSelected(d, r.id)
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : slotState(d, r.id).free ? 'bg-white text-slate-700 border-slate-300 hover:border-indigo-400' : 'bg-slate-100 text-slate-400 border-slate-200'"
-                  @click="toggle(d, r.id)"
-                >{{ slotStore.rounds.length > 1 ? r.label : 'จอง' }}<span v-if="slotState(d, r.id).note" class="ml-1 font-normal">· {{ slotState(d, r.id).note }}</span></button>
-              </div>
+          <p v-if="!hasBookableDate" class="text-xs text-slate-500">ตอนนี้ยังไม่มีวันเปิดรับจอง</p>
+
+          <!-- ทางลัดเลือกหลายวัน (จองยาวไม่ต้องกดทีละวัน): แสดงเมื่อจองได้เกิน 1 ช่อง -->
+          <div v-if="maxSlots > 1" class="space-y-1.5">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] font-semibold text-slate-600">เลือกเร็ว (นับจากวันนี้):</span>
+              <button v-for="q in quickChoices" :key="q.days" type="button"
+                class="min-h-[36px] px-3 rounded-full text-xs font-semibold border border-slate-300 bg-white text-slate-700 hover:border-indigo-400 transition"
+                @click="quickSelect(q.days)">{{ q.label }}</button>
+              <button type="button"
+                class="min-h-[36px] px-3 rounded-full text-xs font-semibold border transition"
+                :class="rangeMode ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 bg-white text-slate-700 hover:border-indigo-400'"
+                @click="rangeMode = !rangeMode">{{ rangeMode ? 'ยกเลิกเลือกช่วง' : 'เลือกเป็นช่วง' }}</button>
+              <button v-if="selected.length" type="button" class="min-h-[36px] px-2 text-xs underline font-semibold text-slate-600" @click="clearSelected">ล้างทั้งหมด</button>
             </div>
+            <p v-if="rangeMode" class="text-[11px] text-indigo-700">โหมดเลือกช่วง: แตะวันเริ่ม แล้วแตะวันสิ้นสุดในปฏิทิน (เลื่อนเดือนได้) ระบบข้ามวันที่ตลาดปิด/แผงไม่ว่างให้</p>
+            <p v-if="bulkMsg" class="text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">{{ bulkMsg }}</p>
           </div>
+
+          <!-- รอบเดียว: เลือกหลายวันจากปฏิทินได้เลย -->
+          <BookingCalendar
+            v-if="!multiRound"
+            v-model="selectedDates" mode="multiple" tone="light"
+            :min-date="slotStore.minDate" :max-date="slotStore.maxDate"
+            :is-disabled="dayDisabled" :max-select="maxSlots"
+            :range-mode="rangeMode" @pick-range="onPickRange"
+          />
+
+          <!-- หลายรอบ: เลือกวันในปฏิทินก่อน แล้วเลือกรอบของวันนั้นด้านล่าง -->
+          <template v-else>
+            <BookingCalendar
+              v-model="activeDate" mode="single" tone="light" :marked="selectedDatesOfSlots"
+              :min-date="slotStore.minDate" :max-date="slotStore.maxDate" :is-disabled="dayDisabled"
+              :range-mode="rangeMode" @pick-range="onPickRange"
+            />
+            <div v-if="activeDate" class="flex items-center gap-2 flex-wrap pt-1">
+              <span class="text-xs font-semibold text-slate-700">{{ formatThaiDate(activeDate) }}</span>
+              <button
+                v-for="r in slotStore.rounds" :key="r.id" type="button"
+                :disabled="!slotState(activeDate, r.id).free"
+                class="min-h-[44px] px-3 rounded-xl text-xs font-semibold border transition disabled:opacity-50 disabled:cursor-not-allowed"
+                :class="isSelected(activeDate, r.id)
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : slotState(activeDate, r.id).free ? 'bg-white text-slate-700 border-slate-300 hover:border-indigo-400' : 'bg-slate-100 text-slate-400 border-slate-200'"
+                @click="toggle(activeDate, r.id)"
+              >{{ r.label }}<span v-if="slotState(activeDate, r.id).note" class="ml-1 font-normal">· {{ slotState(activeDate, r.id).note }}</span></button>
+            </div>
+            <p v-else class="text-[11px] text-slate-500">เลือกวันในปฏิทิน แล้วเลือกรอบที่ต้องการ</p>
+          </template>
         </div>
 
         <!-- Strict Data Validation Form Fields -->
@@ -238,11 +270,12 @@ import BaseModal from '../ui/BaseModal.vue'
 import { compressSlipImage } from '../../utils/compressImage'
 import { useSlotStore } from '../../stores/slotStore'
 import { useMyBookingsStore } from '../../stores/myBookingsStore'
-import { canBookSlot, openDatesFrom, slotKey, formatSlotLabel } from '../../utils/marketCalendar'
+import BookingCalendar from '../booking/BookingCalendar.vue'
+import { canBookSlot, canBookDate, nextBookableDate, parseSlotKey, slotKey, formatSlotLabel } from '../../utils/marketCalendar'
 import { isHoldExpired } from '../../utils/holdTimer'
 import { serverNow, calibrateServerClock } from '../../utils/serverClock'
 import { fetchBooking } from '../../services/firebaseService'
-import { todayBangkok, formatThaiDate } from '../../utils/date'
+import { todayBangkok, addDays, formatThaiDate } from '../../utils/date'
 import { ShieldCheck, CheckCircle, UploadCloud, AlertCircle, Lock } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -268,8 +301,76 @@ const totalAmount = computed(() => (props.stall?.price || 0) * selected.value.le
 const holdMinutes = computed(() => slotStore.settings.paymentHoldMinutes)
 // lock ที่รอสลิปและหมดเวลาแล้วถือว่าว่าง จองทับได้
 const takenKeys = computed(() => new Set(stallLocks.value.filter(l => !isHoldExpired(l, serverNow())).map(l => l.slotKey)))
-const bookableDates = computed(() =>
-  openDatesFrom(slotStore.settings, todayBangkok(), slotStore.settings.maxAdvanceDays + 1))
+const multiRound = computed(() => slotStore.rounds.length > 1)
+const activeDate = ref('') // โหมดหลายรอบ: วันที่กำลังเลือกรอบ
+const hasBookableDate = computed(() => !!nextBookableDate(slotStore.settings, addDays(todayBangkok(), -1), 1))
+
+// โหมดรอบเดียว: ปฏิทินเลือกวัน -> slotKey (รอบเดียวของตลาด)
+const selectedDates = computed({
+  get: () => selected.value.map(k => parseSlotKey(k)?.date).filter(Boolean),
+  set: (dates) => { selected.value = dates.map(d => slotKey(d, slotStore.rounds[0].id)).sort() }
+})
+const selectedDatesOfSlots = computed(() => [...new Set(selectedDates.value)])
+
+// ─── เลือกหลายวันรวดเดียว (เลือกเร็ว / เลือกเป็นช่วง) ───────────────────────────
+const rangeMode = ref(false)
+const bulkMsg = ref('')
+const quickChoices = computed(() => [
+  { days: 30, label: '30 วัน' }, { days: 90, label: '3 เดือน' }, { days: 180, label: '6 เดือน' }, { days: 365, label: '1 ปี' }
+].filter(q => q.days <= slotStore.settings.maxAdvanceDays + 1))
+
+function clearSelected() { selected.value = []; bulkMsg.value = ''; validationError.value = '' }
+
+/** เติมทุกวัน (ทุกรอบที่ว่าง) ในช่วง from..to ที่จองได้ ข้ามวันที่จองไม่ได้ และไม่เกินเพดานต่อการจอง */
+function addRange(from, to) {
+  const cap = maxSlots.value
+  const next = new Set(selected.value)
+  const before = next.size
+  const skipped = { closed: 0, taken: 0 }
+  let capped = false
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const states = slotStore.rounds.map(r => ({ key: slotKey(d, r.id), st: slotState(d, r.id) }))
+    const free = states.filter(x => x.st.free)
+    if (!free.length) {
+      if (states.every(x => x.st.note === 'จองแล้ว')) skipped.taken++
+      else skipped.closed++
+      continue
+    }
+    for (const x of free) {
+      if (next.has(x.key)) continue
+      if (next.size >= cap) { capped = true; break }
+      next.add(x.key)
+    }
+    if (capped) break
+  }
+  selected.value = [...next].sort()
+  validationError.value = ''
+  const added = next.size - before
+  const parts = [`เพิ่ม ${added} ช่อง`]
+  if (skipped.closed) parts.push(`ข้าม ${skipped.closed} วัน (ตลาดปิด/ปิดรับจอง)`)
+  if (skipped.taken) parts.push(`ข้าม ${skipped.taken} วัน (แผงนี้ไม่ว่าง)`)
+  if (capped) parts.push(`ครบเพดาน ${cap} ช่องต่อการจองแล้ว`)
+  bulkMsg.value = `${parts.join(' · ')} · รวมเลือกแล้ว ${next.size} ช่อง`
+}
+
+function quickSelect(days) {
+  const from = slotStore.minDate
+  const to = addDays(from, days - 1) > slotStore.maxDate ? slotStore.maxDate : addDays(from, days - 1)
+  addRange(from, to)
+}
+function onPickRange({ from, to }) {
+  addRange(from, to)
+  rangeMode.value = false
+}
+
+/** วันนี้เลือกไม่ได้เมื่อทุกรอบจองไม่ได้ (ตลาดปิด/เกินกำหนด/แผงนี้ไม่ว่างทุกรอบ) */
+function dayDisabled(date) {
+  const states = slotStore.rounds.map(r => ({ r, st: slotState(date, r.id) }))
+  if (states.some(x => x.st.free)) return { disabled: false }
+  if (states.every(x => x.st.note === 'จองแล้ว')) return { disabled: true, reason: 'แผงนี้ไม่ว่างวันนั้น', mark: 'x' }
+  const check = canBookDate(slotStore.settings, date)
+  return { disabled: true, reason: check.reason || 'จองไม่ได้' }
+}
 
 function slotState(date, roundId) {
   const key = slotKey(date, roundId)
@@ -316,6 +417,9 @@ watch(() => [props.isOpen, props.stall?.id], async ([open]) => {
   await loadLocks()
   const key = slotStore.selectedSlotKey
   if (slotStore.selectedCheck.ok && !takenKeys.value.has(key)) selected.value = [key]
+  activeDate.value = selected.value.length ? slotStore.selectedDate : ''
+  rangeMode.value = false
+  bulkMsg.value = ''
 }, { immediate: true })
 
 const slipPreview = ref('')

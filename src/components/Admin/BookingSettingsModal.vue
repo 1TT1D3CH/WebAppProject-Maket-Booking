@@ -37,8 +37,8 @@
         <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">จองล่วงหน้าได้ไม่เกิน (วัน)
           <input v-model.number="form.maxAdvanceDays" type="number" min="1" max="365" class="field" />
         </label>
-        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">จองได้สูงสุดต่อครั้ง (ช่อง, 1-7)
-          <input v-model.number="form.maxSlotsPerBooking" type="number" min="1" max="7" class="field" />
+        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">จองได้สูงสุดต่อครั้ง (ช่อง, 1-{{ MAX_SLOTS_LIMIT }})
+          <input v-model.number="form.maxSlotsPerBooking" type="number" min="1" :max="MAX_SLOTS_LIMIT" class="field" />
         </label>
         <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">ปิดรับจองเวลา (ของวันก่อนวันขาย)
           <div class="flex gap-2">
@@ -151,7 +151,7 @@ import { useAuthStore } from '../../stores/authStore'
 import { useMarketStore } from '../../stores/marketStore'
 import { saveMarketSettings } from '../../services/marketSettings'
 import { countFutureLocksOfRound } from '../../services/firebaseService'
-import { normalizeSettings, MAX_ROUNDS } from '../../utils/marketCalendar'
+import { normalizeSettings, MAX_ROUNDS, MAX_SLOTS_LIMIT } from '../../utils/marketCalendar'
 import { todayBangkok, formatThaiDate } from '../../utils/date'
 
 const props = defineProps({ isOpen: Boolean })

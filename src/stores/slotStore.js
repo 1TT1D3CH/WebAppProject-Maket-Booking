@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { subscribeMarketSettings } from '../services/marketSettings'
 import { subscribeLocksForSlot, bookStallSlots, fetchStallLocks } from '../services/firebaseService'
 import {
-  normalizeSettings, getRounds, slotKey, parseSlotKey, canBookSlot, openDatesFrom,
-  isMarketOpen, DEFAULT_ROUND_ID
+  normalizeSettings, getRounds, slotKey, parseSlotKey, canBookSlot, canBookDate, nextBookableDate,
+  maxBookableDate, isMarketOpen, DEFAULT_ROUND_ID
 } from '../utils/marketCalendar'
 import { todayBangkok, addDays, isDateKey } from '../utils/date'
 import { isHoldExpired, HOLD_STATUSES, holdExpiresAtMs } from '../utils/holdTimer'
@@ -11,6 +11,8 @@ import { serverNow } from '../utils/serverClock'
 
 // ตัวเดียวทั้งหน้า: ปลุกตอน lock ที่ใกล้หมดเวลาที่สุดหมดอายุ แล้ววาดสีแผงใหม่ (ไม่ใช่ timer ต่อแผง)
 let expiryTimer = null
+// วันที่เลือกมาจาก ?date= ใน URL (ต้องตรวจว่ายังจองได้) ถ้าเป็นค่าเริ่มต้น (วันนี้) คงไว้แม้ตลาดปิด
+let urlDateRequested = false
 
 // วัน/รอบที่เลือกเก็บใน query ของ URL (?date=2026-10-17&round=morning) ไม่ใช้ router
 function readUrlSelection() {
@@ -54,8 +56,9 @@ export const useSlotStore = defineStore('slots', {
       return canBookSlot(state.settings, this.selectedSlotKey)
     },
     isSelectedDayOpen: (s) => isMarketOpen(s.settings, s.selectedDate),
-    // วันเปิดขาย 14 วันถัดไป (รวมวันนี้ถ้าเปิด) สำหรับแถบเลือกวัน
-    quickDates: (s) => openDatesFrom(s.settings, todayBangkok(), 14),
+    // ช่วงวันที่เลือกในปฏิทินได้: วันนี้ -> วันนี้ + maxAdvanceDays
+    minDate: () => todayBangkok(),
+    maxDate: (s) => maxBookableDate(s.settings),
     // lock ที่รอสลิปแล้วหมดเวลา = แผงว่าง (คำนวณที่ client; rules ตัดสินซ้ำตอนจองทับ)
     lockByStall: (s) => Object.fromEntries(
       s.locks.filter(l => !isHoldExpired(l, s.nowMs)).map(l => [l.stallId, l])
@@ -66,8 +69,11 @@ export const useSlotStore = defineStore('slots', {
     startSettings() {
       if (this.unsubSettings) return
       this.unsubSettings = subscribeMarketSettings((settings) => {
+        const firstLoad = !this.settingsLoaded
         this.settings = settings
         this.settingsLoaded = true
+        // ?date= ใน URL เกินช่วงจอง/ตลาดปิด -> เด้งไปวันเปิดถัดไปที่จองได้ (ทำครั้งแรกที่ได้ settings จริง)
+        if (firstLoad && urlDateRequested) this.fixSelectedDate()
         // รอบที่เลือกถูกลบออกจากตั้งค่า -> กลับไปรอบแรก
         if (!this.rounds.some(r => r.id === this.selectedRoundId)) this.setRound(this.rounds[0].id)
       }, (err) => console.error('Market settings listener error:', err))
@@ -81,6 +87,7 @@ export const useSlotStore = defineStore('slots', {
     /** เริ่มจากค่าใน URL (ถ้ามี) แล้วฟัง lock ของช่องที่เลือก */
     startLocks() {
       const fromUrl = readUrlSelection()
+      urlDateRequested = !!fromUrl.date
       if (fromUrl.date) this.selectedDate = fromUrl.date
       if (fromUrl.round && this.rounds.some(r => r.id === fromUrl.round)) this.selectedRoundId = fromUrl.round
       this.listenLocks()
@@ -138,6 +145,27 @@ export const useSlotStore = defineStore('slots', {
       this.selectedRoundId = roundId
       writeUrlSelection(this.selectedDate, this.selectedRoundId)
       this.listenLocks()
+    },
+
+    /** วันที่เลือกอยู่จองไม่ได้ (เกินช่วง/ตลาดปิด/ผ่านมาแล้ว) -> ย้ายไปวันเปิดที่จองได้ถัดไป ไม่มีก็คงเดิม */
+    fixSelectedDate() {
+      if (canBookDate(this.settings, this.selectedDate).ok) return
+      // วันที่อยู่นอกช่วง (ผ่านมาแล้ว/เกินกำหนด) นับใหม่จากวันนี้ นอกนั้นหาถัดจากวันที่เลือก
+      const from = this.selectedDate < this.minDate || this.selectedDate > this.maxDate ? addDays(this.minDate, -1) : this.selectedDate
+      const next = nextBookableDate(this.settings, from, 1)
+      if (next) this.selectDate(next)
+    },
+
+    /** เลื่อนไปวันเปิดขายที่จองได้ก่อนหน้า/ถัดไป (step = -1 | 1) */
+    selectOpenDay(step) {
+      const next = nextBookableDate(this.settings, this.selectedDate, step)
+      if (next) this.selectDate(next)
+    },
+
+    /** ใช้กับปฏิทิน: วันนี้จองได้ไหม + เหตุผล */
+    dayDisabled(date) {
+      const r = canBookDate(this.settings, date)
+      return r.ok ? { disabled: false } : { disabled: true, reason: r.reason }
     },
 
     goToday() {

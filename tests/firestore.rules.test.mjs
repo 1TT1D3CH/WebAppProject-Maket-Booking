@@ -926,7 +926,13 @@ describe('จองตามวัน/รอบ (bookingLocks)', () => {
     const batch = writeBatch(db)
     const lastAuditId = addAudit(batch, db, uid, 'booking.create', id)
     batch.set(doc(db, `bookings/${id}`), slotBookingDoc(uid, stallId, slots, { lastAuditId, ...booking }))
-    for (const k of locks) batch.set(doc(db, `bookingLocks/${lockId(stallId, k)}`), lockDoc(stallId, k, id, lockOver))
+    // จองเกิน 7 ช่อง lock ต้องมี seq (ลำดับใน booking.slots) เพื่อให้ rules ตรวจเป็นลูกโซ่
+    for (const k of locks) {
+      const seq = slots.length > 7 && slots.length <= 14 && slots.includes(k) ? { seq: slots.indexOf(k) } : {}
+      const lock = lockDoc(stallId, k, id, { ...seq, ...lockOver })
+      if (lock.seq === null) delete lock.seq // lockOver.seq = null -> ไม่ใส่ seq
+      batch.set(doc(db, `bookingLocks/${lockId(stallId, k)}`), lock)
+    }
     if (withSlip) batch.set(doc(db, `bookingSlips/${id}`), { tenantId: uid, marketId: 'main-layout', dataUrl: SLIP, mime: 'image/webp', bytes: 10, createdAt: serverTimestamp() })
     return batch.commit()
   }
@@ -944,9 +950,45 @@ describe('จองตามวัน/รอบ (bookingLocks)', () => {
     await assertSucceeds(slotBook({ slots }))
   })
 
-  test('จองเกิน 7 slot ไม่ผ่าน', async () => {
-    const slots = ['10-17', '10-18', '10-19', '10-20', '10-21', '10-22', '10-23', '10-24'].map(d => keyOf(`2026-${d}`))
-    await assertFails(slotBook({ slots }))
+  const manyDays = (n) => Array.from({ length: n }, (_, i) => keyOf(`2026-11-${String(i + 1).padStart(2, '0')}`))
+
+  test('จอง 8 และ 14 slot ในครั้งเดียวสำเร็จ (ตรวจ lock แบบลูกโซ่)', async () => {
+    await assertSucceeds(slotBook({ id: 'm8', slots: manyDays(8) }))
+    await assertSucceeds(slotBook({ uid: 'bob', id: 'm14', slots: manyDays(14).map(k => k.replace('2026-11', '2026-12')) }))
+  })
+
+  const yearDays = (n, offset = 0) => Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 10, 1 + offset + i))
+    return keyOf(d.toISOString().slice(0, 10))
+  })
+
+  test('จอง 15 และ 365 slot ในครั้งเดียวสำเร็จ (batch 368 รายการ), 366 ไม่ผ่าน', async () => {
+    await assertSucceeds(slotBook({ id: 'b15', slots: yearDays(15) }))
+    await assertSucceeds(slotBook({ uid: 'bob', id: 'b365', slots: yearDays(365, 100) }))
+    await assertFails(slotBook({ uid: 'carol', id: 'b366', slots: yearDays(366, 600) }))
+  })
+
+  test('จองเกิน 14 ช่องแต่ไม่มี lock ช่องแรก/ช่องสุดท้าย ไม่ผ่าน', async () => {
+    const slots = yearDays(20)
+    await assertFails(slotBook({ id: 'x1', slots, locks: slots.slice(1) }))
+    await assertFails(slotBook({ id: 'x2', slots, locks: slots.slice(0, 19) }))
+  })
+
+  test('จองเกิน 14 ช่องแล้วใส่ seq ใน lock ไม่ผ่าน (กันตรวจลูกโซ่เกินเพดานการอ่าน)', async () => {
+    await assertFails(slotBook({ id: 'y1', slots: yearDays(20), lockOver: { seq: 0 } }))
+  })
+
+  test('จองเกิน 7 slot แต่ขาด lock บางช่อง (กลางโซ่ / ช่องสุดท้าย) ไม่ผ่าน', async () => {
+    const slots = manyDays(10)
+    await assertFails(slotBook({ id: 'g1', slots, locks: slots.filter((_, i) => i !== 4) }))
+    await assertFails(slotBook({ id: 'g2', slots, locks: slots.slice(0, 9) }))
+    await assertFails(slotBook({ id: 'g3', slots, locks: slots.slice(1) }))
+  })
+
+  test('จองเกิน 7 slot แต่ lock ไม่มี seq หรือ seq ผิดลำดับ ไม่ผ่าน', async () => {
+    const slots = manyDays(9)
+    await assertFails(slotBook({ id: 'n1', slots, lockOver: { seq: null } }))
+    await assertFails(slotBook({ id: 'n2', slots, lockOver: { seq: 0 } }))
   })
 
   test('สองบัญชีจอง slot เดียวกัน ผ่านได้บัญชีเดียว', async () => {
@@ -1063,6 +1105,29 @@ describe('จองตามวัน/รอบ (bookingLocks)', () => {
       await assertSucceeds(slotBook({ id: 'sb1' }))
       await assertFails(cancelSlot('alice', { cancel: false }))
       await assertFails(cancelSlot('bob', { cancel: false }))
+    })
+
+    test('การจอง 14 ช่อง: ผู้เช่ายกเลิก + ปล่อย lock ครบทุกช่อง แล้วคนอื่นจองได้', async () => {
+      const slots = Array.from({ length: 14 }, (_, i) => keyOf(`2026-11-${String(i + 1).padStart(2, '0')}`))
+      await assertSucceeds(slotBook({ id: 'sb1', slots }))
+      const db = tenant('alice')
+      const batch = writeBatch(db)
+      const lastAuditId = addAudit(batch, db, 'alice', 'booking.cancel_self', 'sb1')
+      batch.update(doc(db, 'bookings/sb1'), { status: 'cancelled', updatedAt: serverTimestamp(), lastAuditId })
+      for (const k of slots) batch.delete(doc(db, `bookingLocks/${lockId('s1', k)}`))
+      await assertSucceeds(batch.commit())
+      await assertSucceeds(slotBook({ uid: 'bob', id: 'sb2', slots }))
+    })
+
+    test('การจอง 14 ช่อง: admin อนุมัติ (lock ทุกช่องเป็น approved) ได้', async () => {
+      const slots = Array.from({ length: 14 }, (_, i) => keyOf(`2026-11-${String(i + 1).padStart(2, '0')}`))
+      await assertSucceeds(slotBook({ id: 'sb1', slots }))
+      const db = tenant('admin1')
+      const batch = writeBatch(db)
+      const lastAuditId = addAudit(batch, db, 'admin1', 'booking.approve', 'sb1')
+      batch.update(doc(db, 'bookings/sb1'), { status: 'approved', decidedBy: 'admin1', decidedAt: serverTimestamp(), updatedAt: serverTimestamp(), lastAuditId })
+      for (const k of slots) batch.update(doc(db, `bookingLocks/${lockId('s1', k)}`), { status: 'approved' })
+      await assertSucceeds(batch.commit())
     })
 
     test('ยกเลิกโดยไม่มี audit log ไม่ผ่าน', async () => {
