@@ -1,15 +1,20 @@
 <template>
-  <div class="min-h-screen min-h-dvh bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col font-['Prompt',sans-serif] transition-colors duration-300">
+  <div class="h-screen h-dvh bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col font-['Prompt',sans-serif] transition-colors duration-300 overflow-hidden">
     
-    <!-- Top Navigation Header -->
-    <Navbar 
-      @open-zone-manager="isZoneManagerOpen = true"
-      @open-market-settings="isMarketSettingsOpen = true"
-      @open-booking-settings="isBookingSettingsOpen = true"
+    <!-- App Header -->
+    <AppHeader
       @open-firebase-config="isFirebaseConfigOpen = true"
       @open-auth="isAuthOpen = true"
       @open-notifications="isNotificationsOpen = true"
       @open-my-bookings="isMyBookingsOpen = true"
+    />
+
+    <!-- Page Bar (Admin Builder only) -->
+    <BuilderPageBar
+      v-if="marketStore.activeMode === 'admin' && authStore.isAdmin"
+      @open-zone-manager="isZoneManagerOpen = true"
+      @open-market-settings="isMarketSettingsOpen = true"
+      @open-booking-settings="isBookingSettingsOpen = true"
     />
 
     <!-- Main Content Area: Switches between Admin Builder & Customer View -->
@@ -147,7 +152,8 @@ import { useMarketStore } from './stores/marketStore'
 import { useNotificationStore } from './stores/notificationStore'
 import { useAuthStore } from './stores/authStore'
 
-import Navbar from './components/Navbar.vue'
+import AppHeader from './components/layout/AppHeader.vue'
+import BuilderPageBar from './components/builder/BuilderPageBar.vue'
 import StallCanvas from './components/Admin/StallCanvas.vue'
 import StallEditorModal from './components/Admin/StallEditorModal.vue'
 import ObjectEditorModal from './components/Admin/ObjectEditorModal.vue'

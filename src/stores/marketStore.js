@@ -178,6 +178,32 @@ export const useMarketStore = defineStore('market', {
       return Math.round(m * this.scalePxPerMeter)
     },
 
+    _hasCollision(excludeId, x, y, w, h) {
+      const allItems = [
+        ...this.stalls.map(s => ({ id: s.id, x: s.x, y: s.y, w: s.width, h: s.height })),
+        ...this.layoutObjects.map(o => ({ id: o.id, x: o.x, y: o.y, w: o.width, h: o.height }))
+      ]
+      return allItems.some(item =>
+        item.id !== excludeId &&
+        x < item.x + item.w &&
+        x + w > item.x &&
+        y < item.y + item.h &&
+        y + h > item.y
+      )
+    },
+
+    _findFreePosition(w, h) {
+      const step = Math.max(this.gridSizePx || 20, 20)
+      const cw = this.canvasWidthPx
+      const ch = this.canvasHeightPx
+      for (let y = 20; y + h <= ch; y += step) {
+        for (let x = 20; x + w <= cw; x += step) {
+          if (!this._hasCollision(null, x, y, w, h)) return { x, y }
+        }
+      }
+      return { x: 20, y: 20 }
+    },
+
     getStallMetrics(stall) {
       if (!stall) return { widthM: 0, heightM: 0, xM: 0, yM: 0, areaSqM: 0 }
       const widthM = this.pxToM(stall.width)
@@ -425,12 +451,21 @@ export const useMarketStore = defineStore('market', {
       const nextX = (count * 40) % (this.canvasWidthPx - 120) + 40
       const nextY = Math.floor((count * 40) / (this.canvasWidthPx - 120)) * 120 + 40
 
+      let posX = Math.min(Math.max(0, this.canvasWidthPx - defaultW_Px), Math.max(0, stallData.x ?? nextX))
+      let posY = Math.min(Math.max(0, this.canvasHeightPx - defaultH_Px), Math.max(0, stallData.y ?? nextY))
+
+      if (this._hasCollision(null, posX, posY, defaultW_Px, defaultH_Px)) {
+        const free = this._findFreePosition(defaultW_Px, defaultH_Px)
+        posX = free.x
+        posY = free.y
+      }
+
       const newStall = {
         id: `stall-${Date.now().toString(36)}`,
         stallNo: stallData.stallNo || `S-${String(count).padStart(2, '0')}`,
         zoneId: stallData.zoneId || defaultZone,
-        x: stallData.x ?? nextX,
-        y: stallData.y ?? nextY,
+        x: posX,
+        y: posY,
         width: defaultW_Px,
         height: defaultH_Px,
         price: stallData.price || defaultZoneObj.pricePerDay || 400,
@@ -468,15 +503,22 @@ export const useMarketStore = defineStore('market', {
       const stall = this.stalls.find(s => s.id === id)
       if (stall) {
         const step = this.gridSizePx
-        
+        const maxX = this.canvasWidthPx - stall.width
+        const maxY = this.canvasHeightPx - stall.height
+
+        let newX, newY
         if (this.snapToGrid && step > 0) {
-          stall.x = Math.max(0, Math.round(xPx / step) * step)
-          stall.y = Math.max(0, Math.round(yPx / step) * step)
+          newX = Math.min(Math.max(0, maxX), Math.max(0, Math.round(xPx / step) * step))
+          newY = Math.min(Math.max(0, maxY), Math.max(0, Math.round(yPx / step) * step))
         } else {
-          stall.x = Math.max(0, Math.round(xPx))
-          stall.y = Math.max(0, Math.round(yPx))
+          newX = Math.min(Math.max(0, maxX), Math.max(0, Math.round(xPx)))
+          newY = Math.min(Math.max(0, maxY), Math.max(0, Math.round(yPx)))
         }
 
+        if (this._hasCollision(id, newX, newY, stall.width, stall.height)) return
+
+        stall.x = newX
+        stall.y = newY
         this.hasUnsavedChanges = true
         this.persistToLocal()
       }
@@ -487,15 +529,22 @@ export const useMarketStore = defineStore('market', {
       if (stall) {
         const step = this.gridSizePx
         const minPx = this.mToPx(1.0)
+        const maxW = this.canvasWidthPx - stall.x
+        const maxH = this.canvasHeightPx - stall.y
 
+        let newW, newH
         if (this.snapToGrid && step > 0) {
-          stall.width = Math.max(minPx, Math.round(widthPx / step) * step)
-          stall.height = Math.max(minPx, Math.round(heightPx / step) * step)
+          newW = Math.min(maxW, Math.max(minPx, Math.round(widthPx / step) * step))
+          newH = Math.min(maxH, Math.max(minPx, Math.round(heightPx / step) * step))
         } else {
-          stall.width = Math.max(minPx, Math.round(widthPx))
-          stall.height = Math.max(minPx, Math.round(heightPx))
+          newW = Math.min(maxW, Math.max(minPx, Math.round(widthPx)))
+          newH = Math.min(maxH, Math.max(minPx, Math.round(heightPx)))
         }
 
+        if (this._hasCollision(id, stall.x, stall.y, newW, newH)) return
+
+        stall.width = newW
+        stall.height = newH
         this.hasUnsavedChanges = true
         this.persistToLocal()
       }
@@ -521,13 +570,25 @@ export const useMarketStore = defineStore('market', {
       const wPx = this.mToPx(preset.widthM || 3.0)
       const hPx = this.mToPx(preset.heightM || 2.0)
       
+      const rawX = 120 + (count * 30) % 300
+      const rawY = 120 + (count * 30) % 200
+
+      let objX = Math.min(Math.max(0, this.canvasWidthPx - wPx), Math.max(0, rawX))
+      let objY = Math.min(Math.max(0, this.canvasHeightPx - hPx), Math.max(0, rawY))
+
+      if (this._hasCollision(null, objX, objY, wPx, hPx)) {
+        const free = this._findFreePosition(wPx, hPx)
+        objX = free.x
+        objY = free.y
+      }
+
       const newObj = {
         id: `obj-${Date.now().toString(36)}`,
         type: preset.type || 'facility',
         subType: preset.subType || 'info',
         label: preset.label || `วัตถุโครงสร้าง ${count}`,
-        x: 120 + (count * 30) % 300,
-        y: 120 + (count * 30) % 200,
+        x: objX,
+        y: objY,
         width: wPx,
         height: hPx,
         rotation: 0, // 0, 90, 180, 270 degrees
@@ -572,13 +633,22 @@ export const useMarketStore = defineStore('market', {
       const obj = this.layoutObjects.find(o => o.id === id)
       if (obj) {
         const step = this.gridSizePx
+        const maxX = this.canvasWidthPx - obj.width
+        const maxY = this.canvasHeightPx - obj.height
+
+        let newX, newY
         if (this.snapToGrid && step > 0) {
-          obj.x = Math.max(0, Math.round(xPx / step) * step)
-          obj.y = Math.max(0, Math.round(yPx / step) * step)
+          newX = Math.min(Math.max(0, maxX), Math.max(0, Math.round(xPx / step) * step))
+          newY = Math.min(Math.max(0, maxY), Math.max(0, Math.round(yPx / step) * step))
         } else {
-          obj.x = Math.max(0, Math.round(xPx))
-          obj.y = Math.max(0, Math.round(yPx))
+          newX = Math.min(Math.max(0, maxX), Math.max(0, Math.round(xPx)))
+          newY = Math.min(Math.max(0, maxY), Math.max(0, Math.round(yPx)))
         }
+
+        if (this._hasCollision(id, newX, newY, obj.width, obj.height)) return
+
+        obj.x = newX
+        obj.y = newY
         this.hasUnsavedChanges = true
         this.persistToLocal()
       }
@@ -589,15 +659,22 @@ export const useMarketStore = defineStore('market', {
       if (obj) {
         const step = this.gridSizePx
         const minPx = this.mToPx(0.8)
+        const maxW = this.canvasWidthPx - obj.x
+        const maxH = this.canvasHeightPx - obj.y
 
+        let newW, newH
         if (this.snapToGrid && step > 0) {
-          obj.width = Math.max(minPx, Math.round(widthPx / step) * step)
-          obj.height = Math.max(minPx, Math.round(heightPx / step) * step)
+          newW = Math.min(maxW, Math.max(minPx, Math.round(widthPx / step) * step))
+          newH = Math.min(maxH, Math.max(minPx, Math.round(heightPx / step) * step))
         } else {
-          obj.width = Math.max(minPx, Math.round(widthPx))
-          obj.height = Math.max(minPx, Math.round(heightPx))
+          newW = Math.min(maxW, Math.max(minPx, Math.round(widthPx)))
+          newH = Math.min(maxH, Math.max(minPx, Math.round(heightPx)))
         }
 
+        if (this._hasCollision(id, obj.x, obj.y, newW, newH)) return
+
+        obj.width = newW
+        obj.height = newH
         this.hasUnsavedChanges = true
         this.persistToLocal()
       }
@@ -688,6 +765,10 @@ export const useMarketStore = defineStore('market', {
       if (stall) {
         stall.status = 'available'
         stall.bookedBy = null
+        if (this.initialStallsState[stallId]) {
+          this.initialStallsState[stallId] = { ...this.initialStallsState[stallId], status: 'available', bookedBy: null }
+        }
+        if (this.published) patchPublishedStall(this.published, stallId, { status: 'available', bookedBy: null })
         this.markUnsaved()
         this.showNotification(`ยกเลิกการจองแผง ${stall.stallNo} — กด "บันทึกผัง" เพื่อยืนยัน`, 'warning')
       }

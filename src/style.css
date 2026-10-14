@@ -29,8 +29,7 @@
 
   /* ความสูงพื้นที่ใช้งานใต้ header: dvh ไม่ล้นเมื่อแถบ Safari บน iOS แสดงอยู่ (fallback เป็น vh) */
   .h-app-view {
-    height: calc(100vh - 112px);
-    height: calc(100dvh - 112px);
+    height: 100%;
   }
 
   /* เว้นพื้นที่รอยบาก/home bar ของ iPhone */

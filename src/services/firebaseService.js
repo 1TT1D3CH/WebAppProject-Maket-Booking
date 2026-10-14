@@ -414,9 +414,13 @@ export async function decideBooking({ bookingId, decision, reason = '', actor, r
         if (decision === 'rejected') tx.delete(ls.ref)
         if (decision === 'needs_slip') tx.update(ls.ref, { status: 'needs_slip', holdStartedAt: serverTimestamp(), holdMinutes })
       }
-    } else {
-      if (decision === 'approved') tx.update(stallRef, { status: 'booked', updatedAt: now })
-      if (decision === 'rejected') tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: now })
+    }
+    if (!isSlot || decision === 'rejected') {
+      const sd = sSnap.data()
+      if (decision === 'approved' && !isSlot) tx.update(stallRef, { status: 'booked', updatedAt: now })
+      if (decision === 'rejected' && sd.status !== 'available' && sd.status !== 'disabled') {
+        tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: now })
+      }
     }
 
     const stallNo = b.stallNo || sSnap.data().stallNo || ''
@@ -541,9 +545,10 @@ export async function cancelMyBooking(bookingId) {
     if (b.status === 'pending') patch.refund = { status: 'pending' }
     tx.update(bookingRef, patch)
     if (isSlot) {
-      // ปล่อยทุก slot ของการจองนี้ (เฉพาะ lock ที่ยังชี้การจองนี้)
       for (const ls of lockSnaps) if (ls.exists() && ls.data().bookingId === bookingId) tx.delete(ls.ref)
-    } else if (sSnap.data().bookedBy?.bookingId === bookingId) {
+    }
+    const sd = sSnap.data()
+    if (sd.status !== 'available' && sd.status !== 'disabled' && (!sd.bookedBy?.bookingId || sd.bookedBy.bookingId === bookingId)) {
       tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
     }
   })
@@ -902,7 +907,9 @@ export async function expireBookings(bookings, actor, offsetMs = 0) {
         const b = snap.data()
         if (!isHoldExpired(b, now, offsetMs)) return
         const isSlot = Array.isArray(b.slots) && b.slots.length > 0
+        const stallRef = doc(stallsCol(), b.stallId)
         const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
+        const sSnap = await tx.get(stallRef)
         const auditId = addAuditToBatch(tx, {
           actor,
           action: 'booking.expire',
@@ -915,8 +922,13 @@ export async function expireBookings(bookings, actor, offsetMs = 0) {
         })
         tx.update(bookingRef, { status: 'expired', updatedAt: serverTimestamp(), lastAuditId: auditId })
         for (const ls of lockSnaps) {
-          // ลบเฉพาะ lock ที่ยังชี้การจองนี้ (ถ้าถูกจองทับแล้ว lock เป็นของคนอื่น ไม่แตะ)
           if (ls.exists() && ls.data().bookingId === target.id) tx.delete(ls.ref)
+        }
+        if (sSnap.exists()) {
+          const sd = sSnap.data()
+          if (sd.status !== 'available' && sd.status !== 'disabled' && (!sd.bookedBy?.bookingId || sd.bookedBy.bookingId === target.id)) {
+            tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+          }
         }
         if (b.tenantId !== actor.uid) {
           noticeTo(tx, b, { bookingId: target.id, title: 'การจองหมดเวลา', message: `การจองแผง ${b.stallNo || ''} หมดเวลาชำระเงินแล้ว` })
@@ -1030,7 +1042,7 @@ export async function decideCancellation({ bookingId, mode, reason = '', refundA
     const isSlot = Array.isArray(b.slots) && b.slots.length > 0
     const stallRef = doc(stallsCol(), b.stallId)
     const lockSnaps = isSlot ? await Promise.all(b.slots.map(k => tx.get(lockRef(b.stallId, k)))) : []
-    const sSnap = isSlot ? null : await tx.get(stallRef)
+    const sSnap = await tx.get(stallRef)
 
     const common = { decidedBy: actor.uid, decidedAt: serverTimestamp(), updatedAt: serverTimestamp() }
     if (mode === 'deny') {
@@ -1073,12 +1085,15 @@ export async function decideCancellation({ bookingId, mode, reason = '', refundA
     if (isSlot) update.releasedSlots = suggestion.releaseSlots
     tx.update(bookingRef, update)
     if (isSlot) {
-      // ปล่อยเฉพาะช่องที่ยังไม่ถึงวันขาย ช่องที่ผ่านมาแล้วยังนับเป็นรายได้
       for (const ls of lockSnaps) {
         if (ls.exists() && ls.data().bookingId === bookingId && suggestion.releaseSlots.includes(ls.data().slotKey)) tx.delete(ls.ref)
       }
-    } else if (sSnap?.exists() && sSnap.data().bookedBy?.bookingId === bookingId) {
-      tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+    }
+    if (sSnap.exists()) {
+      const sd = sSnap.data()
+      if (sd.status !== 'available' && sd.status !== 'disabled' && (!sd.bookedBy?.bookingId || sd.bookedBy.bookingId === bookingId)) {
+        tx.update(stallRef, { status: 'available', bookedBy: null, updatedAt: new Date().toISOString() })
+      }
     }
     noticeTo(tx, b, {
       bookingId,

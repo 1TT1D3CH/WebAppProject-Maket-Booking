@@ -261,17 +261,20 @@ onMounted(() => {
 })
 onBeforeUnmount(() => slots.stopLocks())
 
-// สถานะแผงของ "วัน/รอบที่เลือก": ปิดโดย admin หรือถูกจองแบบเดิม (stall.status) ชนะเสมอ
-// นอกนั้นดูจาก bookingLocks ของช่องนี้ (ไม่แก้ข้อมูลแผงใน store)
+// สถานะแผงของ "วัน/รอบที่เลือก": disabled ชนะเสมอ
+// นอกนั้น lock ของช่องนี้เป็นแหล่งข้อมูลหลัก (ไม่แก้ข้อมูลแผงใน store)
 function withSlotStatus(stall) {
-  if (stall.status !== 'available') return stall
+  if (stall.status === 'disabled') return stall
   const lock = slots.lockByStall[stall.id]
-  if (!lock) return stall
-  return {
-    ...stall,
-    status: lock.status === 'approved' ? 'booked' : 'pending',
-    bookedBy: { shopName: lock.shopName || '', goodsType: lock.goodsType || '' }
+  if (lock) {
+    return {
+      ...stall,
+      status: lock.status === 'approved' ? 'booked' : 'pending',
+      bookedBy: { shopName: lock.shopName || '', goodsType: lock.goodsType || '' }
+    }
   }
+  if (stall.status !== 'available') return { ...stall, status: 'available' }
+  return stall
 }
 
 const displayStalls = computed(() => marketStore.pubFilteredStalls
